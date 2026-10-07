@@ -3,7 +3,7 @@
 -- M3 checklist used different column names (content_text, audio_storage_path, etc.)
 -- but the database schema is source of truth.
 
-CREATE TABLE performance.listening_stories (
+CREATE TABLE IF NOT EXISTS performance.listening_stories (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title       VARCHAR(255) NOT NULL,
     content     TEXT,

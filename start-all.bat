@@ -1,7 +1,9 @@
 @echo off
-title College Communication Readiness Platform
+title Communication Readiness Platform
 echo ====================================================
-echo Starting College Communication Platform (Port 5173)...
+echo Starting Communication Readiness Platform...
+echo Backend API:  http://localhost:5000
+echo Frontend App: http://localhost:5173
 echo ====================================================
-npm run dev
+npm run dev:all
 pause

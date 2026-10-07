@@ -102,9 +102,9 @@ export const StudentHistoryModal: React.FC<StudentHistoryModalProps> = ({
   const studentTrack = student.track || student.domain || 'General Track';
   const studentRoll = student.roll_number || student.rollNumber || 'Direct Candidate';
   const studentDept = student.department || 'Computer Science & Engineering';
-  const studentBatch = student.batch_year || student.batchYear || 2026;
+  const studentBatch = student.batch_year || student.batchYear || '—';
   const studentMentor = student.mentor_name || student.mentorName || 'Unassigned';
-  const readinessVal = student.readiness_score || student.score || student.overallReadiness || 78;
+  const readinessVal = student.readiness_score || student.score || student.overallReadiness || 0;
   const verifiedChecklistCount = checklist.filter((t: any) => t.verified_by_mentor || t.verifiedByMentor).length;
 
   return (
@@ -165,15 +165,15 @@ export const StudentHistoryModal: React.FC<StudentHistoryModalProps> = ({
           </div>
           <div className="bg-white p-2.5 rounded-xl border border-neutral-200/80">
             <span className="text-[10px] text-neutral-400 block uppercase">Total Tests Taken</span>
-            <span className="font-bold text-neutral-900 text-sm">{interviewSessions.length + (student.tests_taken || 4)}</span>
+            <span className="font-bold text-neutral-900 text-sm">{interviewSessions.length + (student.tests_taken || 0)}</span>
           </div>
           <div className="bg-white p-2.5 rounded-xl border border-neutral-200/80">
             <span className="text-[10px] text-neutral-400 block uppercase">Mock Interviews</span>
-            <span className="font-bold text-blue-600 text-sm">{Math.max(1, Math.ceil(interviewSessions.length / 2))}</span>
+            <span className="font-bold text-blue-600 text-sm">{interviewSessions.filter((s: any) => s.type === 'MOCK_INTERVIEW').length || (interviewSessions.length ? Math.ceil(interviewSessions.length / 2) : 0)}</span>
           </div>
           <div className="bg-white p-2.5 rounded-xl border border-neutral-200/80">
             <span className="text-[10px] text-neutral-400 block uppercase">Self-Interviews</span>
-            <span className="font-bold text-purple-600 text-sm">{Math.max(2, Math.floor(interviewSessions.length / 2) + 2)}</span>
+            <span className="font-bold text-purple-600 text-sm">{interviewSessions.filter((s: any) => s.type !== 'MOCK_INTERVIEW').length || 0}</span>
           </div>
           <div className="bg-white p-2.5 rounded-xl border border-neutral-200/80">
             <span className="text-[10px] text-neutral-400 block uppercase">Checklist Verified</span>

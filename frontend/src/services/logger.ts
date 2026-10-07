@@ -22,7 +22,12 @@ const MAX_BUFFER = 100;
 function persistShortLog(line: string) {
   // 1. Send to server to append to logs/app.log on disk
   try {
-    fetch('/api/logs', {
+    const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
+    const isLocal = rawApiUrl.includes('localhost') || rawApiUrl.includes('127.0.0.1');
+    const logUrl = (import.meta.env.PROD && isLocal) || !rawApiUrl
+      ? '/api/logs'
+      : `${rawApiUrl.replace(/\/+$/, '')}/api/logs`;
+    fetch(logUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ line })

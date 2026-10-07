@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
 import { InterviewAssignment, DynamicProgram, DepartmentClass, DepartmentStaffMember } from '../../types';
-import { MOCK_DEPARTMENT_CLASSES } from '../../data/mockData';
+
 import { AssignSessionModal } from '../common/AssignSessionModal';
 import { DepartmentClassesManager } from '../common/DepartmentClassesManager';
 import { StudentDirectoryTable } from '../common/StudentDirectoryTable';
@@ -94,7 +94,7 @@ export const DepartmentAdminPortal: React.FC = () => {
       const saved = localStorage.getItem('crp_department_classes');
       if (saved) return JSON.parse(saved);
     } catch {}
-    return MOCK_DEPARTMENT_CLASSES;
+    return [];
   });
 
   // Filter classes belonging to this specific department

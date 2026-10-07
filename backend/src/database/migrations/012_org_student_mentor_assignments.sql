@@ -1,4 +1,4 @@
-CREATE TABLE org.student_mentor_assignments (
+CREATE TABLE IF NOT EXISTS org.student_mentor_assignments (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id   UUID NOT NULL REFERENCES org.students(id) ON DELETE CASCADE,
   mentor_id    UUID NOT NULL REFERENCES identity.users(id) ON DELETE RESTRICT,
@@ -8,6 +8,6 @@ CREATE TABLE org.student_mentor_assignments (
 );
 
 -- Only one active assignment per student at a time
-CREATE UNIQUE INDEX uq_active_student_mentor
+CREATE UNIQUE INDEX IF NOT EXISTS uq_active_student_mentor
   ON org.student_mentor_assignments (student_id)
   WHERE is_active = TRUE;

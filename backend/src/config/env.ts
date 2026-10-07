@@ -14,6 +14,20 @@ const schema = z.object({
   UPLOAD_DIR: z.string().default('uploads'),
   // Shared secret for internal calls to the Python AI service
   AI_INTERNAL_KEY: z.string().default('change-me'),
+  MAX_QUESTIONS_PER_SESSION: z.coerce.number().default(10),
+  MAX_TAB_SWITCH_LIMIT: z.coerce.number().default(4),
+  REDIS_URL: z.string().optional().default('redis://localhost:6379'),
+  DEEPGRAM_API_KEY: z.string().optional().default(''),
+  EMAIL_PROVIDER: z.enum(['gmail', 'smtp', 'resend', 'console']).default('gmail'),
+  SMTP_USER: z.string().optional().default(''),
+  SMTP_PASS: z.string().optional().default(''),
+  SMTP_HOST: z.string().default('smtp.gmail.com'),
+  SMTP_PORT: z.coerce.number().default(465),
+  SMTP_FROM: z.string().optional().default(''),
+  RESEND_API_KEY: z.string().optional().default(''),
+  RESEND_FROM_EMAIL: z.string().default('noreply@crp.local'),
+  APP_NAME: z.string().default('Communication Readiness Platform'),
+  APP_URL: z.string().default('http://localhost:5173'),
 });
 
 export const env = schema.parse(process.env);

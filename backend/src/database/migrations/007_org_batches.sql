@@ -5,7 +5,7 @@ CREATE TYPE org.student_track AS ENUM (
   'DEPARTMENT'
 );
 
-CREATE TABLE org.batches (
+CREATE TABLE IF NOT EXISTS org.batches (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   program_id  UUID NOT NULL REFERENCES org.programs(id) ON DELETE RESTRICT,
   name        VARCHAR(100) NOT NULL,

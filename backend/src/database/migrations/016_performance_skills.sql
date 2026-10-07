@@ -1,5 +1,5 @@
 -- performance.skills  (DBML §5)
-CREATE TABLE performance.skills (
+CREATE TABLE IF NOT EXISTS performance.skills (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   name        VARCHAR     NOT NULL,
   category    VARCHAR     NOT NULL,
@@ -9,12 +9,12 @@ CREATE TABLE performance.skills (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX uq_skills_category_name ON performance.skills (category, name);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_skills_category_name ON performance.skills (category, name);
 
 
 -- performance.student_skills  (DBML §5)
 -- Composite PK; no surrogate id.
-CREATE TABLE performance.student_skills (
+CREATE TABLE IF NOT EXISTS performance.student_skills (
   student_id        UUID    NOT NULL REFERENCES org.students(id) ON DELETE CASCADE,
   skill_id          UUID    NOT NULL REFERENCES performance.skills(id) ON DELETE CASCADE,
   proficiency_score NUMERIC,

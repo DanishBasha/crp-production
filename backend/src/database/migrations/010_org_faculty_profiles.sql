@@ -1,4 +1,4 @@
-CREATE TABLE org.faculty_profiles (
+CREATE TABLE IF NOT EXISTS org.faculty_profiles (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id      UUID UNIQUE NOT NULL REFERENCES identity.users(id) ON DELETE CASCADE,
   department   VARCHAR(100),

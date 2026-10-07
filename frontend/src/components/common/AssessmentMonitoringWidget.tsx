@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { InterviewAssignment } from '../../types';
-import { MOCK_DYNAMIC_DEPARTMENTS, MOCK_DYNAMIC_PROGRAMS } from '../../data/mockData';
 import { 
   Activity, 
   Mic, 
@@ -100,7 +99,10 @@ export const AssessmentMonitoringWidget: React.FC<AssessmentMonitoringWidgetProp
   // Extract all available Programs from data & assignments
   const availablePrograms = useMemo(() => {
     const set = new Set<string>();
-    MOCK_DYNAMIC_PROGRAMS.forEach(p => set.add(p.name));
+    try {
+      const stored = JSON.parse(localStorage.getItem('platform_dynamic_programs') || '[]');
+      if (Array.isArray(stored)) stored.forEach((p: any) => p?.name && set.add(p.name));
+    } catch {}
     collegeAssignments.forEach(a => {
       if (a.targetProgramName) set.add(a.targetProgramName);
       if (a.targetProgramNames) a.targetProgramNames.forEach(p => set.add(p));
@@ -112,7 +114,10 @@ export const AssessmentMonitoringWidget: React.FC<AssessmentMonitoringWidgetProp
   // Extract all available Departments from data & assignments
   const availableDepartments = useMemo(() => {
     const set = new Set<string>();
-    MOCK_DYNAMIC_DEPARTMENTS.forEach(d => set.add(d.name));
+    try {
+      const stored = JSON.parse(localStorage.getItem('platform_departments') || '[]');
+      if (Array.isArray(stored)) stored.forEach((d: any) => d?.name && set.add(d.name));
+    } catch {}
     collegeAssignments.forEach(a => {
       if (a.targetDepartment) set.add(a.targetDepartment);
       if (a.targetDepartments) a.targetDepartments.forEach(d => set.add(d));

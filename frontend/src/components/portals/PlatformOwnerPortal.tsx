@@ -589,22 +589,18 @@ export const PlatformOwnerPortal: React.FC = () => {
                   </div>
                   <div className="flex items-baseline space-x-2">
                     <span className="text-3xl font-black text-neutral-900">
-                      {collegeProfileData?.enrolledStudentsCount || 240}
+                      {collegeProfileData?.enrolledStudentsCount || 0}
                     </span>
                     <span className="text-neutral-500 text-xs">registered students</span>
                   </div>
                   <div className="space-y-1.5 pt-2 border-t border-neutral-100 text-[11px] text-neutral-600">
                     <div className="flex justify-between">
-                      <span>Batch of 2026 (Final Year):</span>
-                      <span className="font-semibold text-neutral-900">140 Candidates</span>
+                      <span>Total Enrolled:</span>
+                      <span className="font-semibold text-neutral-900">{collegeProfileData?.enrolledStudentsCount || 0} Candidates</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Batch of 2027 (Pre-Final):</span>
-                      <span className="font-semibold text-neutral-900">100 Candidates</span>
-                    </div>
-                    <div className="flex justify-between text-emerald-700">
-                      <span>Resume Grounding Verified:</span>
-                      <span className="font-semibold">100% Active</span>
+                    <div className="flex justify-between text-neutral-500">
+                      <span>Institutional Status:</span>
+                      <span className="font-semibold">{collegeProfileData?.enrolledStudentsCount ? 'Active Enrolments' : 'No Students Enrolled'}</span>
                     </div>
                   </div>
                 </div>
@@ -622,32 +618,22 @@ export const PlatformOwnerPortal: React.FC = () => {
                   </div>
                   <div className="flex items-baseline space-x-2">
                     <span className="text-3xl font-black text-neutral-900">
-                      {collegeProfileData?.programsCreated?.length || 3}
+                      {collegeProfileData?.programsCreated?.length || 0}
                     </span>
                     <span className="text-neutral-500 text-xs">active programs</span>
                   </div>
                   <div className="space-y-1.5 pt-2 border-t border-neutral-100">
                     <p className="text-[10px] text-neutral-400 uppercase font-mono font-semibold">Active Institutional Tracks</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {(collegeProfileData?.programsCreated && collegeProfileData.programsCreated.length > 0 ? (
+                      {collegeProfileData?.programsCreated && collegeProfileData.programsCreated.length > 0 ? (
                         collegeProfileData.programsCreated.map((p: any) => (
                           <span key={p.id} className="px-2 py-0.5 bg-neutral-100 border border-neutral-200 rounded-md text-[11px] font-medium text-neutral-800">
                             {p.name}
                           </span>
                         ))
                       ) : (
-                        <>
-                          <span className="px-2 py-0.5 bg-neutral-100 border border-neutral-200 rounded-md text-[11px] font-medium text-neutral-800">
-                            Full-Stack Enterprise Track
-                          </span>
-                          <span className="px-2 py-0.5 bg-neutral-100 border border-neutral-200 rounded-md text-[11px] font-medium text-neutral-800">
-                            AI &amp; Machine Learning Elite
-                          </span>
-                          <span className="px-2 py-0.5 bg-neutral-100 border border-neutral-200 rounded-md text-[11px] font-medium text-neutral-800">
-                            Cloud Infrastructure &amp; DevOps
-                          </span>
-                        </>
-                      ))}
+                        <span className="text-xs text-neutral-400 italic">No custom programs created yet</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -665,22 +651,18 @@ export const PlatformOwnerPortal: React.FC = () => {
                   </div>
                   <div className="flex items-baseline space-x-2">
                     <span className="text-3xl font-black text-neutral-900">
-                      {collegeProfileData?.totalAssignmentsCount || 18}
+                      {collegeProfileData?.totalAssignmentsCount || 0}
                     </span>
                     <span className="text-neutral-500 text-xs">assigned assessments</span>
                   </div>
                   <div className="space-y-1.5 pt-2 border-t border-neutral-100 text-[11px] text-neutral-600">
                     <div className="flex justify-between">
-                      <span>Technical Mock Interviews:</span>
-                      <span className="font-semibold text-neutral-900">12 Drills</span>
+                      <span>Assigned Assessments:</span>
+                      <span className="font-semibold text-neutral-900">{collegeProfileData?.totalAssignmentsCount || 0} Drills</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Listening Comprehension Labs:</span>
-                      <span className="font-semibold text-neutral-900">6 Drills</span>
-                    </div>
-                    <div className="flex justify-between text-blue-700">
-                      <span>Candidate Submission Rate:</span>
-                      <span className="font-semibold">88.4% Completed</span>
+                    <div className="flex justify-between text-neutral-500">
+                      <span>Institutional Status:</span>
+                      <span className="font-semibold">{collegeProfileData?.totalAssignmentsCount ? 'Active Drills' : 'None Assigned'}</span>
                     </div>
                   </div>
                 </div>
@@ -697,25 +679,27 @@ export const PlatformOwnerPortal: React.FC = () => {
                     </span>
                   </div>
                   <div className="flex items-baseline space-x-2">
-                    <span className="text-3xl font-black text-neutral-900">2.45M</span>
+                    <span className="text-3xl font-black text-neutral-900">
+                      {collegeProfileData?.tokenUsage?.totalTokens ? `${(collegeProfileData.tokenUsage.totalTokens / 1000).toFixed(1)}k` : '0'}
+                    </span>
                     <span className="text-neutral-500 text-xs">Tokens Consumed</span>
                   </div>
                   <div className="space-y-1.5 pt-2 border-t border-neutral-100 text-[11px] text-neutral-600">
                     <div className="flex justify-between">
                       <span>Prompt Input Tokens:</span>
-                      <span className="font-mono font-medium text-neutral-900">1,680,400</span>
+                      <span className="font-mono font-medium text-neutral-900">{collegeProfileData?.tokenUsage?.promptTokens?.toLocaleString() || '0'}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Evaluated Output Tokens:</span>
-                      <span className="font-mono font-medium text-neutral-900">770,400</span>
+                      <span className="font-mono font-medium text-neutral-900">{collegeProfileData?.tokenUsage?.completionTokens?.toLocaleString() || '0'}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Audio Speech Synthesis:</span>
-                      <span className="font-semibold text-neutral-900">342 Minutes</span>
+                      <span className="font-semibold text-neutral-900">{collegeProfileData?.tokenUsage?.audioMinutes || 0} Minutes</span>
                     </div>
                     <div className="flex justify-between text-emerald-700 font-medium">
                       <span>AI Model Quota Tier:</span>
-                      <span>Optimal (Within Quota)</span>
+                      <span>{collegeProfileData?.tokenUsage?.status || 'Active (0 Tokens Consumed)'}</span>
                     </div>
                   </div>
                 </div>

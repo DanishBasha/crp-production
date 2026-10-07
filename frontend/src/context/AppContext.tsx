@@ -19,12 +19,10 @@ import {
 } from '../types';
 import { 
   DEFAULT_CLEAN_STUDENT, 
-  INITIAL_STUDENT_PROFILE, 
   INITIAL_CRITERIA_TASKS, 
   MOCK_INTERVIEW_QUESTIONS, 
   MOCK_TRAINER_TENURES, 
-  MOCK_ASSIGNMENTS, 
-  MOCK_MENTEES_LIST
+  MOCK_ASSIGNMENTS
 } from '../data/mockData';
 import { api } from '../services/api';
 import { logger } from '../services/logger';
@@ -680,20 +678,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (saved) {
         const u = JSON.parse(saved);
         if (u.role === 'STUDENT') {
-          const studentId = u.studentId || u.id || 'stu-21cs1084';
+          const studentId = u.studentId || u.id || `stu_${Date.now()}`;
           return {
             id: studentId,
-            name: u.name,
-            rollNumber: u.rollNumber || '22CS1001',
-            email: u.email,
-            department: u.department || 'Computer Science & Engineering',
-            batchYear: u.batchYear || 2026,
+            name: u.name || '',
+            rollNumber: u.rollNumber || '',
+            email: u.email || '',
+            department: u.department || '',
+            batchYear: u.batchYear || new Date().getFullYear(),
             track: u.track || 'General Track',
-            mentorName: 'Dr. S. Ranganathan',
-            mentorEmail: 'ranganathan.s@college.edu',
+            mentorName: u.mentorName || '',
+            mentorEmail: u.mentorEmail || '',
             codingHandles: { leetcodeSolved: 0, githubRepos: 0 },
             resume: null,
-            criteriaTasks: INITIAL_CRITERIA_TASKS.map(t => ({ ...t, isCompleted: false, verifiedByMentor: false })),
+            criteriaTasks: (u.criteriaTasks || []).map((t: any) => ({ ...t, isCompleted: false, verifiedByMentor: false })),
             recentReports: [],
             coins: getInitialCoins(studentId)
           };
@@ -715,7 +713,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const current = prev.coins ?? 0;
       // Regains spent 1 coin and earns 1 bonus credit towards 5 (capped at 5)
       const nextCoins = Math.min(5, current + 2);
-      const sKey = prev.id || 'stu-21cs1084';
+      const sKey = prev.id || 'stu-candidate';
       try {
         localStorage.setItem(`crp_student_coins_${sKey}`, String(nextCoins));
         if (nextCoins > 0) {
@@ -730,7 +728,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const forfeitSessionCoin = () => {
     setSessionCoinAtStake(false);
     setStudent(prev => {
-      const sKey = prev.id || 'stu-21cs1084';
+      const sKey = prev.id || 'stu-candidate';
       if ((prev.coins ?? 0) === 0) {
         try {
           if (!localStorage.getItem(`crp_zero_coins_time_${sKey}`)) {
@@ -801,7 +799,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     try {
-      await api.studentBatch.updateStudentDetails('col-1', studentId, {
+      await api.studentBatch.updateStudentDetails(currentUser?.collegeId || 'col-1', studentId, {
         coins: 5
       });
     } catch {}
@@ -866,35 +864,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string | null>(null);
 
-  const [notifications, setNotifications] = useState<AppNotification[]>([
-    {
-      id: 'notif-1',
-      title: 'Mock Interview Assigned: Full Stack System Architecture',
-      message: 'Evaluates clear technical communication, trade-off reasoning, and structured problem solving. Due Oct 05.',
-      type: 'ASSIGNMENT_CREATED',
-      assignmentId: 'asg-1',
-      createdAt: '2026-09-20T10:00:00Z',
-      read: false
-    },
-    {
-      id: 'notif-2',
-      title: 'Listening Lab Assigned: FinPay Transaction Gateway',
-      message: 'Listen closely to transaction settlement flow narrative. Due Oct 08.',
-      type: 'ASSIGNMENT_CREATED',
-      assignmentId: 'asg-2',
-      createdAt: '2026-09-22T11:30:00Z',
-      read: false
-    },
-    {
-      id: 'notif-3',
-      title: 'Evaluation Completed: Mock Interview Turn',
-      message: 'Your score for Full Stack System Architecture is 86%. Recommended: Placement Ready.',
-      type: 'SESSION_COMPLETED',
-      assignmentId: 'asg-1',
-      createdAt: '2026-09-22T10:35:00Z',
-      read: true
-    }
-  ]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   const unreadNotificationCount = notifications.filter(n => !n.read).length;
 
@@ -984,9 +954,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ) => {
     const isDisq = status === 'DISQUALIFIED';
     const submission: AssignmentSubmission = {
-      studentId: student.id || 'stu-21cs1084',
-      studentName: student.name || 'Aravind Kumar',
-      studentRollNumber: student.rollNumber || '21CS1084',
+      studentId: student.id || 'stu-candidate',
+      studentName: student.name || 'Candidate Student',
+      studentRollNumber: student.rollNumber || '',
       score: isDisq ? 0 : score,
       sessionType,
       submittedAt: new Date().toISOString(),
@@ -1249,9 +1219,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!report) {
         const turns = interviewState.questions;
         const turnCount = Math.max(1, turns.length);
-        const avgTech = Math.round(turns.reduce((acc, t) => acc + (t.technicalScore || 80), 0) / turnCount);
-        const avgComm = Math.round(turns.reduce((acc, t) => acc + (t.communicationScore || 78), 0) / turnCount);
-        const avgWpm = Math.round(turns.reduce((acc, t) => acc + (t.wpm || 125), 0) / turnCount);
+        const avgTech = Math.round(turns.reduce((acc, t) => acc + (t.technicalScore || 0), 0) / turnCount);
+        const avgComm = Math.round(turns.reduce((acc, t) => acc + (t.communicationScore || 0), 0) / turnCount);
+        const avgWpm = Math.round(turns.reduce((acc, t) => acc + (t.wpm || 0), 0) / turnCount);
         const totalFillers = turns.reduce((acc, t) => acc + (t.fillerWords || 0), 0);
 
         report = {
@@ -1262,8 +1232,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           technicalScore: avgTech,
           communicationScore: avgComm,
           averageWpm: avgWpm,
-          totalFillerWords: totalFillers || 2,
-          fillerWordBreakdown: { 'uh': Math.max(1, Math.round(totalFillers * 0.5)), 'like': Math.max(1, Math.round(totalFillers * 0.5)) },
+          totalFillerWords: totalFillers,
+          fillerWordBreakdown: totalFillers > 0 ? { 'uh': Math.round(totalFillers * 0.5), 'um': Math.round(totalFillers * 0.5) } : {},
           skillBreakdown: [
             { skill: `${student.track || 'General'} Core Competency`, score: avgTech, status: avgTech >= 80 ? 'STRONG' : 'MODERATE', recommendation: 'Consistent conceptual structure throughout the session.' },
             { skill: 'Verbal Delivery & Pacing', score: avgComm, status: avgComm >= 80 ? 'STRONG' : 'MODERATE', recommendation: `Pacing averaged ${avgWpm} WPM.` }
@@ -1829,42 +1799,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         track: s.track || s.domain || 'General Track',
         programId: s.programId,
         programName: s.programName,
-        subProgramName: s.subProgramName,
-        mentorName: s.mentorName || s.mentor_name || 'Dr. S. Ranganathan',
-        mentorEmail: s.mentorEmail || s.mentor_email || 'ranganathan.s@college.edu',
-        codingHandles: s.codingHandles || { leetcodeSolved: 110, githubRepos: 12 },
+        mentorName: s.mentorName || s.mentor_name || '',
+        mentorEmail: s.mentorEmail || s.mentor_email || '',
+        codingHandles: s.codingHandles || { leetcodeSolved: 0, githubRepos: 0 },
         resume: s.resume || null,
-        criteriaTasks: s.criteriaTasks || INITIAL_CRITERIA_TASKS,
-        improvementChecklist: s.improvementChecklist || [
-          { id: 'imp-1', week: 'Week 1', title: 'Speed & Fluency Modulation', description: 'Maintain 130-150 words per minute during system design intros.', isCompleted: true, completedAt: '2026-09-21' },
-          { id: 'imp-2', week: 'Week 2', title: 'Database Composite Index Trade-offs', description: 'Articulate B-Tree left-prefix rule without filler words.', isCompleted: true, completedAt: '2026-09-24' },
-          { id: 'imp-3', week: 'Week 3', title: 'Microservices Distributed Transaction', description: 'Explain Saga orchestration pattern with failure compensation steps.', isCompleted: false },
-          { id: 'imp-4', week: 'Week 4', title: 'FAANG Executive Communication', description: 'Lead end-to-end cloud scalability architectural review under time pressure.', isCompleted: false }
-        ],
-        recentReports: s.recentReports || [
-          {
-            id: 'rep-001',
-            date: '2026-09-26',
-            sessionType: 'MOCK_INTERVIEW',
-            overallScore: s.score || s.overallReadiness || 82,
-            technicalScore: 86,
-            communicationScore: 78,
-            averageWpm: 124,
-            totalFillerWords: 9,
-            fillerWordBreakdown: { 'um': 4, 'like': 3, 'you know': 2 },
-            skillBreakdown: [
-              { skill: 'Core Technical Proficiency', score: 88, status: 'STRONG', recommendation: 'Clear mastery of architecture' },
-              { skill: 'Verbal Fluency & Delivery', score: 76, status: 'MODERATE', recommendation: 'Reduce filler words during transitions' }
-            ],
-            actionableNextSteps: [
-              'Pause 2 seconds before answering rather than saying "um"',
-              'Practice explaining trade-offs concisely'
-            ],
-            tabSwitches: 0,
-            isFlagged: false
-          }
-        ],
-        overallReadiness: s.overallReadiness ?? s.score ?? 82,
+        criteriaTasks: s.criteriaTasks || [],
+        improvementChecklist: s.improvementChecklist || [],
+        recentReports: s.recentReports || [],
+        overallReadiness: s.overallReadiness ?? s.score ?? 0,
         coins: getInitialCoins(s.id || s.studentId || s.rollNumber),
         zeroCoinsAt: s.zeroCoinsAt,
         isIndependent: Boolean(s.isIndependent || s.department?.includes('Independent') || s.track === 'EXTERNAL')

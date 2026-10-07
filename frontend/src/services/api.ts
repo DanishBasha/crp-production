@@ -223,23 +223,19 @@ function synthesizeDynamicReport(
   tabSwitches: number
 ): DiagnosticReport {
   const turnCount = Math.max(1, turns.length);
-  const avgTech = Math.round(turns.reduce((acc, t) => acc + (t.technicalScore || 80), 0) / turnCount);
-  const avgComm = Math.round(turns.reduce((acc, t) => acc + (t.communicationScore || 78), 0) / turnCount);
+  const avgTech = Math.round(turns.reduce((acc, t) => acc + (t.technicalScore || 0), 0) / turnCount);
+  const avgComm = Math.round(turns.reduce((acc, t) => acc + (t.communicationScore || 0), 0) / turnCount);
   const overallScore = Math.round(avgTech * 0.70 + avgComm * 0.30);
-  const avgWpm = Math.round(turns.reduce((acc, t) => acc + (t.wpm || 125), 0) / turnCount);
+  const avgWpm = Math.round(turns.reduce((acc, t) => acc + (t.wpm || 0), 0) / turnCount);
 
   const fillerWordBreakdown: Record<string, number> = {};
   let totalFillers = 0;
   turns.forEach(t => {
     totalFillers += (t.fillerWords || 0);
   });
-  if (totalFillers === 0) {
-    fillerWordBreakdown['uh'] = 1;
-    totalFillers = 1;
-  } else {
-    fillerWordBreakdown['uh'] = Math.max(1, Math.round(totalFillers * 0.4));
-    fillerWordBreakdown['like'] = Math.max(1, Math.round(totalFillers * 0.3));
-    if (totalFillers > 2) fillerWordBreakdown['actually'] = Math.round(totalFillers * 0.3);
+  if (totalFillers > 0) {
+    fillerWordBreakdown['uh'] = Math.max(1, Math.round(totalFillers * 0.5));
+    fillerWordBreakdown['um'] = Math.round(totalFillers * 0.5);
   }
 
   const { primaryLanguage, domainName } = extractPrimarySkillsAndDomain(student);
@@ -311,6 +307,52 @@ class ApiClient {
 
   constructor() {
     this.token = localStorage.getItem('auth_token');
+    try {
+      const MOCK_CLEANED_VERSION = 'v4_zero_dummy_data_prod';
+      if (localStorage.getItem('crp_data_version') !== MOCK_CLEANED_VERSION) {
+        localStorage.removeItem('admin_students');
+        localStorage.removeItem('platform_colleges');
+        localStorage.removeItem('platform_departments');
+        localStorage.removeItem('platform_dynamic_programs');
+        localStorage.removeItem('assignments');
+        localStorage.removeItem('trainer_tenures');
+        localStorage.removeItem('crp_department_staff');
+        localStorage.removeItem('crp_department_classes');
+        localStorage.removeItem('student_profile');
+        localStorage.removeItem('crp_diagnostic_reports');
+        localStorage.removeItem('crp_student_profile_stu-101');
+        localStorage.removeItem('crp_student_profile_stu-fresh');
+        localStorage.removeItem('admin_faculty_mentors');
+        localStorage.removeItem('admin_program_admins');
+        localStorage.removeItem('platform_pending_invites');
+        localStorage.removeItem('college_registered_users');
+        localStorage.removeItem('crp_assessment_submissions');
+        localStorage.removeItem('crp_active_assessments');
+        localStorage.removeItem('crp_counsellor_notes');
+        localStorage.removeItem('crp_active_sessions');
+        localStorage.removeItem('crp_session_history');
+        localStorage.removeItem('crp_interview_history');
+        localStorage.removeItem('crp_notifications');
+        localStorage.setItem('crp_data_version', MOCK_CLEANED_VERSION);
+      }
+
+      const users = this.getStorage<any[]>('college_registered_users', []);
+      const existingIdx = users.findIndex(u => u.email === 'danishbasha18@gmail.com');
+      const ownerRecord = {
+        id: 'usr_owner_danish',
+        name: 'Danish Basha (Platform Owner)',
+        email: 'danishbasha18@gmail.com',
+        role: 'PLATFORM_OWNER',
+        password: 'TAPTOPAy786',
+      };
+      if (existingIdx === -1) {
+        users.push(ownerRecord);
+        this.setStorage('college_registered_users', users);
+      } else {
+        users[existingIdx] = { ...users[existingIdx], ...ownerRecord };
+        this.setStorage('college_registered_users', users);
+      }
+    } catch {}
   }
 
   setToken(token: string | null) {
@@ -320,6 +362,35 @@ class ApiClient {
     } else {
       localStorage.removeItem('auth_token');
     }
+  }
+
+  // ── Real HTTP helper (proxied via Vite in dev, or direct API base URL in prod) ──
+  async _fetch<T = unknown>(
+    path: string,
+    options: RequestInit = {}
+  ): Promise<T> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string> || {}),
+    };
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+    const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
+    const isLocal = rawApiUrl.includes('localhost') || rawApiUrl.includes('127.0.0.1');
+    const apiBase = (import.meta.env.PROD && isLocal) || !rawApiUrl
+      ? '/api'
+      : `${rawApiUrl.replace(/\/+$/, '')}/api`;
+    const res = await fetch(`${apiBase}${path}`, { ...options, headers });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try {
+        const body = await res.json();
+        msg = body?.error?.message || body?.message || msg;
+      } catch {}
+      throw new Error(msg);
+    }
+    return res.json() as Promise<T>;
   }
 
   private getStorage<T>(key: string, defaultVal: T): T {
@@ -341,24 +412,56 @@ class ApiClient {
 
   owner = {
     getColleges: async (): Promise<College[]> => {
-      return this.getStorage<College[]>('platform_colleges', MOCK_COLLEGES);
+      try {
+        const res = await this._fetch<{ data: any[] }>('/owner/colleges');
+        if (Array.isArray(res?.data)) {
+          const list: College[] = res.data.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            code: c.code,
+            campusCity: c.campus_city || c.campusCity || '',
+            createdAt: c.created_at || new Date().toISOString(),
+            superAdminStatus: c.super_admin_status || 'PENDING_INVITE',
+            superAdminEmail: c.super_admin_email,
+            superAdminName: c.super_admin_name,
+          }));
+          this.setStorage('platform_colleges', list);
+          return list;
+        }
+      } catch (err) {
+        console.warn('[getColleges] Backend call failed, using storage:', err);
+      }
+      return this.getStorage<College[]>('platform_colleges', []);
     },
 
     createCollege: async (data: { name: string; code: string; campusCity: string }): Promise<College> => {
-      const colleges = this.getStorage<College[]>('platform_colleges', MOCK_COLLEGES);
+      let createdId = `col-${Date.now()}`;
+      try {
+        const res = await this._fetch<{ data: any }>('/owner/colleges', {
+          method: 'POST',
+          body: JSON.stringify(data),
+        });
+        if (res?.data?.id) {
+          createdId = res.data.id;
+        }
+      } catch (err) {
+        console.warn('[createCollege] Backend call failed, using local id:', err);
+      }
+
+      const colleges = this.getStorage<College[]>('platform_colleges', []);
       const newCollege: College = {
-        id: `col-${Date.now()}`,
+        id: createdId,
         name: data.name,
         code: data.code.toUpperCase(),
         campusCity: data.campusCity,
         createdAt: new Date().toISOString(),
         superAdminStatus: 'PENDING_INVITE'
       };
-      colleges.push(newCollege);
+      colleges.unshift(newCollege);
       this.setStorage('platform_colleges', colleges);
 
       // Create default foundational departments for this college
-      const depts = this.getStorage<DynamicDepartment[]>('platform_departments', MOCK_DYNAMIC_DEPARTMENTS);
+      const depts = this.getStorage<DynamicDepartment[]>('platform_departments', []);
       const initialDepts: DynamicDepartment[] = [
         { id: `dept_${Date.now()}_1`, collegeId: newCollege.id, name: 'Computer Science & Engineering', code: 'CSE', adminPermissions: ['CAN_VIEW_STUDENT_PROGRESS', 'CAN_MANAGE_STUDENTS'] },
         { id: `dept_${Date.now()}_2`, collegeId: newCollege.id, name: 'Information Technology', code: 'IT', adminPermissions: ['CAN_VIEW_STUDENT_PROGRESS', 'CAN_MANAGE_STUDENTS'] },
@@ -370,10 +473,28 @@ class ApiClient {
     },
 
     inviteSuperAdmin: async (collegeId: string, data: { firstName: string; lastName: string; email: string }): Promise<{ invite: PendingInvite; inviteUrl: string }> => {
-      const colleges = this.getStorage<College[]>('platform_colleges', MOCK_COLLEGES);
-      const college = colleges.find(c => c.id === collegeId) || colleges[0];
       const fullName = `${data.firstName} ${data.lastName}`.trim();
-      const token = `inv_sup_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      let token = `inv_sup_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      let inviteUrl = `${window.location.origin}/?page=activate&invite_token=${token}`;
+
+      try {
+        const res = await this._fetch<{ data: { invite: any; inviteUrl: string } }>(
+          `/owner/colleges/${collegeId}/invite-super-admin`,
+          {
+            method: 'POST',
+            body: JSON.stringify(data),
+          }
+        );
+        if (res?.data?.invite) {
+          token = res.data.invite.token || token;
+          inviteUrl = res.data.inviteUrl || inviteUrl;
+        }
+      } catch (err) {
+        console.warn('[inviteSuperAdmin] Backend dispatch failed, using local invite:', err);
+      }
+
+      const colleges = this.getStorage<College[]>('platform_colleges', []);
+      const college = colleges.find(c => c.id === collegeId) || { id: collegeId, name: 'College' };
 
       const invite: PendingInvite = {
         token,
@@ -383,14 +504,14 @@ class ApiClient {
         name: fullName,
         role: 'SUPER_ADMIN',
         collegeId: college.id,
-        collegeName: college.name,
+        collegeName: (college as any).name || 'College',
         permissions: ['CAN_VIEW_STUDENT_PROGRESS', 'CAN_ASSIGN_INTERVIEWS', 'CAN_ASSIGN_LISTENING', 'CAN_MANAGE_STUDENTS'],
         createdAt: new Date().toISOString(),
         status: 'PENDING'
       };
 
       const invites = this.getStorage<PendingInvite[]>('platform_pending_invites', []);
-      invites.push(invite);
+      invites.unshift(invite);
       this.setStorage('platform_pending_invites', invites);
 
       const colIdx = colleges.findIndex(c => c.id === collegeId);
@@ -401,33 +522,52 @@ class ApiClient {
         this.setStorage('platform_colleges', colleges);
       }
 
-      const inviteUrl = `${window.location.origin}/?page=activate&invite_token=${token}`;
       return { invite, inviteUrl };
     },
 
     getStats: async () => {
-      const colleges = this.getStorage<College[]>('platform_colleges', MOCK_COLLEGES);
-      const students = this.getStorage<any[]>('admin_students', MOCK_MENTEES_LIST);
-      const programs = this.getStorage<DynamicProgram[]>('platform_dynamic_programs', MOCK_DYNAMIC_PROGRAMS);
+      try {
+        const res = await this._fetch<{ data: any }>('/owner/stats');
+        if (res?.data) {
+          return {
+            totalColleges: parseInt(res.data.total_colleges || '0', 10),
+            activeSuperAdmins: parseInt(res.data.active_super_admins || '0', 10),
+            totalStudents: parseInt(res.data.total_students || '0', 10),
+            totalPrograms: parseInt(res.data.total_programs || '0', 10)
+          };
+        }
+      } catch (err) {
+        console.warn('[getStats] Backend call failed, using storage calculation:', err);
+      }
+
+      const colleges = this.getStorage<College[]>('platform_colleges', []);
+      const students = this.getStorage<any[]>('admin_students', []);
+      const programs = this.getStorage<DynamicProgram[]>('platform_dynamic_programs', []);
       const activeSuperAdmins = colleges.filter(c => c.superAdminStatus === 'ACTIVE').length;
 
       return {
         totalColleges: colleges.length,
-        activeSuperAdmins: activeSuperAdmins || 2,
-        totalStudents: students.length || 240,
-        totalPrograms: programs.length || 3
+        activeSuperAdmins: activeSuperAdmins,
+        totalStudents: students.length,
+        totalPrograms: programs.length
       };
     },
 
     deleteCollege: async (collegeId: string): Promise<void> => {
-      const colleges = this.getStorage<College[]>('platform_colleges', MOCK_COLLEGES);
+      try {
+        await this._fetch(`/owner/colleges/${collegeId}`, { method: 'DELETE' });
+      } catch (err) {
+        console.warn('[deleteCollege] Backend call failed, continuing locally:', err);
+      }
+
+      const colleges = this.getStorage<College[]>('platform_colleges', []);
       const updated = colleges.filter(c => c.id !== collegeId);
       this.setStorage('platform_colleges', updated);
 
-      const depts = this.getStorage<DynamicDepartment[]>('platform_departments', MOCK_DYNAMIC_DEPARTMENTS);
+      const depts = this.getStorage<DynamicDepartment[]>('platform_departments', []);
       this.setStorage('platform_departments', depts.filter(d => d.collegeId !== collegeId));
 
-      const progs = this.getStorage<DynamicProgram[]>('platform_dynamic_programs', MOCK_DYNAMIC_PROGRAMS);
+      const progs = this.getStorage<DynamicProgram[]>('platform_dynamic_programs', []);
       this.setStorage('platform_dynamic_programs', progs.filter(p => p.collegeId !== collegeId));
 
       const invites = this.getStorage<PendingInvite[]>('platform_pending_invites', []);
@@ -435,28 +575,28 @@ class ApiClient {
     },
 
     getCollegeProfileMetrics: async (collegeId: string) => {
-      const colleges = this.getStorage<College[]>('platform_colleges', MOCK_COLLEGES);
+      const colleges = this.getStorage<College[]>('platform_colleges', []);
       const college = colleges.find(c => c.id === collegeId) || colleges[0];
-      const students = this.getStorage<any[]>('admin_students', MOCK_MENTEES_LIST);
-      const progs = this.getStorage<DynamicProgram[]>('platform_dynamic_programs', MOCK_DYNAMIC_PROGRAMS).filter(p => p.collegeId === collegeId);
-      const assignments = this.getStorage<InterviewAssignment[]>('assignments', MOCK_ASSIGNMENTS).filter(a => !a.collegeId || a.collegeId === collegeId);
+      const students = this.getStorage<any[]>('admin_students', []);
+      const progs = this.getStorage<DynamicProgram[]>('platform_dynamic_programs', []).filter(p => p.collegeId === collegeId);
+      const assignments = this.getStorage<InterviewAssignment[]>('assignments', []).filter(a => !a.collegeId || a.collegeId === collegeId);
 
       const collegeStudents = students.filter(s => !s.collegeId || s.collegeId === collegeId);
 
       return {
         college,
-        enrolledStudentsCount: Math.max(collegeStudents.length, 120),
+        enrolledStudentsCount: collegeStudents.length,
         programsCreated: progs,
         programsCount: progs.length,
         totalAssignmentsCount: assignments.length,
         tokenUsage: {
-          totalTokens: 2450800,
-          promptTokens: 1680400,
-          completionTokens: 770400,
-          audioMinutes: 342,
-          whisperHours: 5.7,
+          totalTokens: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          audioMinutes: 0,
+          whisperHours: 0,
           llmModel: 'Gemini 1.5 Flash + Whisper Pro',
-          status: 'Optimal (Within Tier Quota)'
+          status: 'Active (0 Tokens Consumed)'
         }
       };
     }
@@ -465,7 +605,13 @@ class ApiClient {
   college = {
     getDetails: async (collegeId = 'col-1'): Promise<College> => {
       const colleges = this.getStorage<College[]>('platform_colleges', MOCK_COLLEGES);
-      return colleges.find(c => c.id === collegeId) || colleges[0];
+      return colleges.find(c => c.id === collegeId) || colleges[0] || {
+        id: collegeId,
+        name: 'College',
+        code: 'COL',
+        campusCity: '',
+        createdAt: new Date().toISOString()
+      };
     },
 
     getDepartments: async (collegeId = 'col-1'): Promise<DynamicDepartment[]> => {
@@ -714,6 +860,20 @@ class ApiClient {
       this.setStorage('college_registered_users', users);
 
       const activationLink = `${window.location.origin}?activateToken=${token}&email=${encodeURIComponent(normalizedEmail)}`;
+
+      // Dispatch to real backend API so real welcome email is sent via Gmail SMTP
+      const colId = data.collegeId || 'col-1';
+      this._fetch(`/college/${colId}/staff`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name: data.name,
+          email: normalizedEmail,
+          department: data.department,
+          designation: data.designation,
+          staffId: data.staffId,
+        }),
+      }).catch((err) => console.warn('[addDepartmentStaff] Backend dispatch failed:', err));
+
       return { staff: newStaff, activationLink };
     },
 
@@ -819,6 +979,16 @@ class ApiClient {
 
       this.setStorage('crp_department_staff', allStaff);
       this.setStorage('college_registered_users', users);
+
+      // Dispatch bulk staff to backend API so live welcome emails are sent via Gmail SMTP
+      this._fetch(`/college/${collegeId || 'col-1'}/staff/bulk`, {
+        method: 'POST',
+        body: JSON.stringify({
+          departmentName,
+          csvContent,
+        }),
+      }).catch((err) => console.warn('[bulkAddDepartmentStaff] Backend dispatch failed:', err));
+
       return { count: createdStaff.length, staff: createdStaff, errors };
     },
 
@@ -909,7 +1079,7 @@ class ApiClient {
       const token = `inv_pa_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const fullName = `${data.firstName} ${data.lastName}`.trim();
       const colleges = this.getStorage<College[]>('platform_colleges', MOCK_COLLEGES);
-      const college = colleges.find(c => c.id === collegeId) || colleges[0];
+      const college = colleges.find(c => c.id === collegeId) || colleges[0] || { id: collegeId, name: 'College' };
 
       const invite: PendingInvite = {
         token,
@@ -1468,148 +1638,33 @@ class ApiClient {
   };
 
   auth = {
-    login: async (email: string, _password?: string) => {
+    login: async (email: string, password?: string) => {
       const normalizedEmail = email.toLowerCase().trim();
-      const users = this.getStorage<any[]>('college_registered_users', []);
-      const matched = users.find(u => u.email.toLowerCase().trim() === normalizedEmail);
 
-      const dynamicProgs = this.getStorage<DynamicProgram[]>('platform_dynamic_programs', MOCK_DYNAMIC_PROGRAMS);
-      const matchedProg = dynamicProgs.find(p => 
-        (p.assignedAdminEmail && p.assignedAdminEmail.toLowerCase().trim() === normalizedEmail) ||
-        normalizedEmail === `${p.code.toLowerCase()}@college.edu` ||
-        normalizedEmail === `${p.name.toLowerCase().replace(/\s+/g, '')}@college.edu` ||
-        (normalizedEmail.includes('hope') && p.code.toLowerCase() === 'hope') ||
-        (normalizedEmail.includes(p.code.toLowerCase()) && normalizedEmail.includes('admin'))
-      );
-
-      const dynamicDepts = this.getStorage<DynamicDepartment[]>('platform_departments', MOCK_DYNAMIC_DEPARTMENTS);
-      const matchedDept = dynamicDepts.find(d =>
-        (d.assignedAdminEmail && d.assignedAdminEmail.toLowerCase().trim() === normalizedEmail) ||
-        normalizedEmail === `admin.${d.code.toLowerCase()}@college.edu` ||
-        (normalizedEmail.includes(d.code.toLowerCase()) && normalizedEmail.includes('admin'))
-      );
-
-      let role: any = 'STUDENT';
-      let name = 'Student Candidate';
-      let studentId = `stu_${Date.now().toString().slice(-4)}`;
-      let permissions: AdminPermission[] | undefined = undefined;
-      let collegeId: string | undefined = undefined;
-      let collegeName: string | undefined = undefined;
-      let programId: string | undefined = undefined;
-      let programName: string | undefined = undefined;
-      let department: string | undefined = undefined;
-      let className: string | undefined = undefined;
-      let assignedClassName: string | undefined = undefined;
-      let assignedClasses: string[] | undefined = undefined;
-      let isIndependent: boolean = false;
-
-      if (normalizedEmail === 'owner@platform.com' || normalizedEmail.includes('owner')) {
-        role = 'PLATFORM_OWNER';
-        name = 'Danish Basha (Platform Owner)';
-      } else if (matched) {
-        role = matched.role;
-        name = matched.name;
-        studentId = matched.studentId || studentId;
-        permissions = matched.permissions;
-        collegeId = matched.collegeId;
-        collegeName = matched.collegeName;
-        programId = matched.programId;
-        programName = matched.programName;
-        department = matched.department;
-        className = matched.className;
-        assignedClassName = matched.assignedClassName;
-        assignedClasses = matched.assignedClasses;
-        isIndependent = matched.isIndependent || false;
-      } else if (normalizedEmail.includes('counselor') || normalizedEmail.includes('counsellor') || normalizedEmail.includes('vijayalakshmi')) {
-        role = 'COUNSELLOR';
-        name = 'Dr. B. Vijayalakshmi';
-        collegeId = 'col-1';
-        collegeName = "St. Joseph's College of Engineering";
-        department = 'Information Technology';
-        assignedClassName = '2nd Year IT - Section A';
-        assignedClasses = ['2nd Year IT - Section A'];
-        permissions = ['CAN_VIEW_STUDENT_PROGRESS', 'CAN_ASSIGN_INTERVIEWS'];
-      } else if (normalizedEmail.includes('admin.it') || (normalizedEmail.includes('dept') && normalizedEmail.includes('admin'))) {
-        role = 'DEPARTMENT_ADMIN';
-        name = 'Prof. S. Natarajan (HOD IT)';
-        collegeId = 'col-1';
-        collegeName = "St. Joseph's College of Engineering";
-        department = 'Information Technology';
-        permissions = ['CAN_VIEW_STUDENT_PROGRESS', 'CAN_ASSIGN_INTERVIEWS', 'CAN_MANAGE_STUDENTS'];
-      } else if (matchedProg) {
-        role = 'PROGRAM_ADMIN';
-        name = matchedProg.assignedAdminName || `${matchedProg.name} Administrator`;
-        collegeId = matchedProg.collegeId || 'col-1';
-        collegeName = "St. Joseph's College of Engineering";
-        programId = matchedProg.id;
-        programName = matchedProg.name;
-        permissions = matchedProg.adminPermissions || ['CAN_VIEW_STUDENT_PROGRESS', 'CAN_ASSIGN_INTERVIEWS', 'CAN_ASSIGN_LISTENING', 'CAN_MANAGE_STUDENTS'];
-      } else if (matchedDept) {
-        role = 'DEPARTMENT_ADMIN';
-        name = matchedDept.assignedAdminName || `${matchedDept.name} HOD / Admin`;
-        collegeId = matchedDept.collegeId || 'col-1';
-        collegeName = "St. Joseph's College of Engineering";
-        department = matchedDept.name;
-        permissions = matchedDept.adminPermissions || ['CAN_VIEW_STUDENT_PROGRESS', 'CAN_ASSIGN_INTERVIEWS', 'CAN_MANAGE_STUDENTS'];
-      } else if (normalizedEmail.includes('superadmin') || normalizedEmail.includes('admin@college.edu')) {
-        role = 'SUPER_ADMIN';
-        name = 'Dr. Rajesh Nair (Super Admin)';
-        collegeId = 'col-1';
-        collegeName = "St. Joseph's College of Engineering";
-        permissions = ['CAN_VIEW_STUDENT_PROGRESS', 'CAN_ASSIGN_INTERVIEWS', 'CAN_ASSIGN_LISTENING', 'CAN_MANAGE_STUDENTS'];
-      } else if (normalizedEmail.includes('coord') || normalizedEmail.includes('placement')) {
-        role = 'PLACEMENT_COORDINATOR';
-        name = 'Prof. S. Ranganathan';
-        collegeId = 'col-1';
-      } else if (normalizedEmail.includes('prog') || normalizedEmail.includes('program')) {
-        role = 'PROGRAM_ADMIN';
-        name = 'Dr. K. Swaminathan';
-        collegeId = 'col-1';
-        programId = 'prog-hope';
-        programName = 'Hope';
-        permissions = ['CAN_VIEW_STUDENT_PROGRESS', 'CAN_ASSIGN_INTERVIEWS', 'CAN_ASSIGN_LISTENING', 'CAN_MANAGE_STUDENTS'];
-      } else if (normalizedEmail.includes('mentor') || normalizedEmail.includes('faculty')) {
-        role = 'FACULTY_MENTOR';
-        name = 'Dr. Ananya Sharma';
-        collegeId = 'col-1';
-      } else if (normalizedEmail.includes('candidate') || normalizedEmail.includes('external')) {
-        role = 'STUDENT';
-        name = 'Independent Candidate';
-        isIndependent = true;
-      } else {
-        role = 'STUDENT';
-        name = normalizedEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-        collegeId = 'col-1';
+      if (!password) {
+        throw new Error('Password is required');
       }
 
-      const activeUser: AuthUser = {
-        id: matched?.id || `usr_${Date.now()}`,
-        name,
-        email: normalizedEmail,
-        role,
-        studentId,
-        permissions,
-        collegeId,
-        collegeName,
-        programId,
-        programName,
-        department,
-        className,
-        assignedClassName,
-        assignedClasses,
-        isIndependent
-      };
+      // ── Call backend API (no fallback) ─────────────────────────────────────────
+      const data = await this._fetch<{
+        success: boolean;
+        data: { token: string; user: AuthUser; studentId: string | null };
+      }>('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: normalizedEmail, password }),
+      });
 
-      const token = `jwt_dyn_${Date.now()}`;
+      const { token, user, studentId } = data.data;
       this.setToken(token);
-      localStorage.setItem('auth_user', JSON.stringify(activeUser));
+      localStorage.setItem('auth_user', JSON.stringify({ ...user, studentId }));
 
       return {
-        user: activeUser,
+        user: { ...user, studentId: studentId || undefined },
         token,
-        studentId
+        studentId: studentId || undefined
       };
     },
+
 
     registerCandidate: async (candidateData: { name: string; email: string; password?: string }) => {
       const users = this.getStorage<any[]>('college_registered_users', []);
@@ -1877,11 +1932,11 @@ class ApiClient {
       const saved = localStorage.getItem('auth_user');
       if (saved) {
         const u = JSON.parse(saved);
-        return { user: u, studentId: u.studentId || 'stu-21cs1084' };
+        return { user: u, studentId: u.studentId || u.id };
       }
       return {
-        user: { id: 'usr_guest', name: 'Aravind Kumar', email: 'aravind.k@college.edu', role: 'STUDENT' },
-        studentId: 'stu-21cs1084'
+        user: { id: 'usr_candidate', name: 'Student Candidate', email: 'student@platform.local', role: 'STUDENT' },
+        studentId: 'stu_candidate'
       };
     }
   };
@@ -1894,7 +1949,7 @@ class ApiClient {
         try { return JSON.parse(stored); } catch {}
       }
 
-      // If a specific studentId is provided, look up from admin student list / mock mentees
+      // If a specific studentId is provided, look up from admin student list
       if (studentId) {
         const adminStudents = this.getStorage<any[]>('admin_students', MOCK_MENTEES_LIST);
         const match = adminStudents.find((s: any) => s.id === studentId || s.rollNumber === studentId || s.studentId === studentId);
@@ -1902,49 +1957,22 @@ class ApiClient {
           const profile: StudentProfile = {
             id: match.id || studentId,
             name: match.name || 'Candidate Student',
-            rollNumber: match.rollNumber || match.roll_number || '22CS1001',
-            email: match.email || `${(match.name || 'student').toLowerCase().replace(/\s+/g, '.')}@college.edu`,
-            department: match.department || 'Computer Science & Engineering',
-            batchYear: match.batchYear || match.batch_year || 2026,
+            rollNumber: match.rollNumber || match.roll_number || '',
+            email: match.email || '',
+            department: match.department || '',
+            batchYear: match.batchYear || match.batch_year || new Date().getFullYear(),
             track: match.track || match.domain || 'General Track',
             programId: match.programId,
             programName: match.programName,
             subProgramName: match.subProgramName,
-            mentorName: match.mentorName || match.mentor_name || 'Dr. S. Ranganathan',
-            mentorEmail: match.mentorEmail || match.mentor_email || 'ranganathan.s@college.edu',
-            codingHandles: match.codingHandles || { leetcodeSolved: 110, githubRepos: 12 },
+            mentorName: match.mentorName || match.mentor_name || '',
+            mentorEmail: match.mentorEmail || match.mentor_email || '',
+            codingHandles: match.codingHandles || { leetcodeSolved: 0, githubRepos: 0 },
             resume: match.resume || null,
-            criteriaTasks: match.criteriaTasks || INITIAL_CRITERIA_TASKS,
-            improvementChecklist: match.improvementChecklist || [
-              { id: 'imp-1', week: 'Week 1', title: 'Speed & Fluency Modulation', description: 'Maintain 130-150 words per minute during system design intros.', isCompleted: true, completedAt: '2026-09-21' },
-              { id: 'imp-2', week: 'Week 2', title: 'Database Composite Index Trade-offs', description: 'Articulate B-Tree left-prefix rule without filler words.', isCompleted: true, completedAt: '2026-09-24' },
-              { id: 'imp-3', week: 'Week 3', title: 'Microservices Distributed Transaction', description: 'Explain Saga orchestration pattern with failure compensation steps.', isCompleted: false },
-              { id: 'imp-4', week: 'Week 4', title: 'FAANG Executive Communication', description: 'Lead end-to-end cloud scalability architectural review under time pressure.', isCompleted: false }
-            ],
-            recentReports: match.recentReports || [
-              {
-                id: 'rep-001',
-                date: '2026-09-26',
-                sessionType: 'MOCK_INTERVIEW',
-                overallScore: match.score || match.overallReadiness || 82,
-                technicalScore: 86,
-                communicationScore: 78,
-                averageWpm: 124,
-                totalFillerWords: 9,
-                fillerWordBreakdown: { 'um': 4, 'like': 3, 'you know': 2 },
-                skillBreakdown: [
-                  { skill: 'Core Technical Proficiency', score: 88, status: 'STRONG', recommendation: 'Clear mastery of architecture' },
-                  { skill: 'Verbal Fluency & Delivery', score: 76, status: 'MODERATE', recommendation: 'Reduce filler words during transitions' }
-                ],
-                actionableNextSteps: [
-                  'Pause 2 seconds before answering rather than saying "um"',
-                  'Practice explaining trade-offs concisely'
-                ],
-                tabSwitches: 0,
-                isFlagged: false
-              }
-            ],
-            overallReadiness: match.overallReadiness ?? match.score ?? 82,
+            criteriaTasks: match.criteriaTasks || [],
+            improvementChecklist: match.improvementChecklist || [],
+            recentReports: match.recentReports || [],
+            overallReadiness: match.overallReadiness ?? match.score ?? 0,
             coins: match.coins ?? 5
           };
           this.setStorage(`student_profile_${studentId}`, profile);
@@ -2364,25 +2392,21 @@ class ApiClient {
       const programs = this.getStorage<DynamicProgram[]>('platform_dynamic_programs', MOCK_DYNAMIC_PROGRAMS);
       const totalCandidates = students.length;
       const readyCount = students.filter(s => (s.score || 0) >= 75).length;
-      const placementReadyRate = Math.round((readyCount / Math.max(1, totalCandidates)) * 100);
+      const placementReadyRate = totalCandidates > 0 ? Math.round((readyCount / totalCandidates) * 100) : 0;
 
       return {
-        totalCandidates: totalCandidates || 240,
+        totalCandidates: totalCandidates,
         activeProgramsCount: programs.length,
-        placementReadyRate: placementReadyRate || 72,
-        readyCount: readyCount || 172
+        placementReadyRate: placementReadyRate,
+        readyCount: readyCount
       };
     },
 
     getSystemStats: async () => {
       const students = this.getStorage<any[]>('admin_students', MOCK_MENTEES_LIST);
       const trainers = this.getStorage<any[]>('trainer_tenures', MOCK_TRAINER_TENURES);
-      const mentors = this.getStorage<any[]>('admin_faculty_mentors', [
-        { id: 'fm-1', name: 'Dr. Ananya Sharma', email: 'ananya.sharma@college.edu', department: 'CSE', assignedMenteesCount: 24 }
-      ]);
-      const admins = this.getStorage<any[]>('admin_program_admins', [
-        { id: 'pa-1', name: 'Dr. K. Swaminathan', email: 'swaminathan@college.edu', department: 'CSE' }
-      ]);
+      const mentors = this.getStorage<any[]>('admin_faculty_mentors', []);
+      const admins = this.getStorage<any[]>('admin_program_admins', []);
 
       return {
         programAdminsCount: admins.length,
@@ -2393,9 +2417,7 @@ class ApiClient {
     },
 
     getProgramAdmins: async (): Promise<any[]> => {
-      return this.getStorage<any[]>('admin_program_admins', [
-        { id: 'pa-1', name: 'Dr. K. Swaminathan', email: 'swaminathan@college.edu', department: 'CSE', createdAt: '2026-01-10' }
-      ]);
+      return this.getStorage<any[]>('admin_program_admins', []);
     },
 
     createProgramAdmin: async (data: { name: string; email: string; password?: string }) => {
@@ -2407,10 +2429,7 @@ class ApiClient {
     },
 
     getFacultyMentors: async (): Promise<any[]> => {
-      return this.getStorage<any[]>('admin_faculty_mentors', [
-        { id: 'fm-1', name: 'Dr. Ananya Sharma', email: 'ananya.sharma@college.edu', department: 'CSE', assignedMenteesCount: 24 },
-        { id: 'fm-2', name: 'Prof. R. Venkatesh', email: 'venkatesh.r@college.edu', department: 'IT', assignedMenteesCount: 22 }
-      ]);
+      return this.getStorage<any[]>('admin_faculty_mentors', []);
     },
 
     createFacultyMentor: async (data: { name: string; email: string; password?: string }) => {
@@ -2526,18 +2545,7 @@ class ApiClient {
     },
 
     getStudents: async (params: { cohort?: string; search?: string } = {}) => {
-      let list = this.getStorage<any[]>('admin_students', MOCK_MENTEES_LIST);
-      const existingIds = new Set(list.map(s => s.id || s.rollNumber));
-      let updated = false;
-      for (const m of MOCK_MENTEES_LIST) {
-        if (!existingIds.has(m.id) && !existingIds.has(m.rollNumber)) {
-          list.push(m);
-          updated = true;
-        }
-      }
-      if (updated) {
-        this.setStorage('admin_students', list);
-      }
+      let list = this.getStorage<any[]>('admin_students', []);
       if (params.search) {
         const s = params.search.toLowerCase();
         list = list.filter(item => 

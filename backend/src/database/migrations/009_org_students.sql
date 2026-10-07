@@ -1,4 +1,4 @@
-CREATE TABLE org.students (
+CREATE TABLE IF NOT EXISTS org.students (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id          UUID UNIQUE NOT NULL REFERENCES identity.users(id) ON DELETE CASCADE,
   roll_number      VARCHAR(50) UNIQUE NOT NULL,

@@ -1,5 +1,5 @@
 -- evaluation.responses  (DBML §11)
-CREATE TABLE evaluation.responses (
+CREATE TABLE IF NOT EXISTS evaluation.responses (
   id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   attempt_id       UUID        NOT NULL REFERENCES assessment.assessment_attempts(id) ON DELETE CASCADE,
   question_id      UUID        NOT NULL REFERENCES session.questions(id) ON DELETE CASCADE,
@@ -11,12 +11,12 @@ CREATE TABLE evaluation.responses (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX uq_responses_idempotency     ON evaluation.responses (idempotency_key);
-CREATE UNIQUE INDEX uq_responses_attempt_question ON evaluation.responses (attempt_id, question_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_responses_idempotency     ON evaluation.responses (idempotency_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_responses_attempt_question ON evaluation.responses (attempt_id, question_id);
 
 
 -- evaluation.ai_runs  (DBML §12)
-CREATE TABLE evaluation.ai_runs (
+CREATE TABLE IF NOT EXISTS evaluation.ai_runs (
   id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   response_id       UUID        REFERENCES evaluation.responses(id),
   capability        VARCHAR,
@@ -37,7 +37,7 @@ CREATE TABLE evaluation.ai_runs (
 
 
 -- evaluation.response_evaluations  (DBML §13)
-CREATE TABLE evaluation.response_evaluations (
+CREATE TABLE IF NOT EXISTS evaluation.response_evaluations (
   id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   response_id          UUID        NOT NULL UNIQUE REFERENCES evaluation.responses(id),
   ai_run_id            UUID        NOT NULL REFERENCES evaluation.ai_runs(id),
@@ -58,7 +58,7 @@ CREATE TABLE evaluation.response_evaluations (
 
 -- performance.assessment_reports  (DBML §14)
 -- Immutable after creation — one per attempt.
-CREATE TABLE performance.assessment_reports (
+CREATE TABLE IF NOT EXISTS performance.assessment_reports (
   id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   attempt_id              UUID        NOT NULL UNIQUE REFERENCES assessment.assessment_attempts(id),
   student_id              UUID        NOT NULL REFERENCES org.students(id) ON DELETE CASCADE,
@@ -77,4 +77,4 @@ CREATE TABLE performance.assessment_reports (
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_assessment_reports_student ON performance.assessment_reports (student_id);
+CREATE INDEX IF NOT EXISTS idx_assessment_reports_student ON performance.assessment_reports (student_id);

@@ -1,4 +1,6 @@
 export type UserRole =
+  | 'PLATFORM_OWNER'
+  | 'SUPER_ADMIN'
   | 'STUDENT'
   | 'FACULTY_MENTOR'
   | 'PROGRAM_ADMIN'

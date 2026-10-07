@@ -1,5 +1,5 @@
 -- credit.credit_accounts  (DBML §18)
-CREATE TABLE credit.credit_accounts (
+CREATE TABLE IF NOT EXISTS credit.credit_accounts (
   id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id UUID        NOT NULL UNIQUE REFERENCES org.students(id) ON DELETE CASCADE,
   balance    NUMERIC     NOT NULL DEFAULT 0,
@@ -10,7 +10,7 @@ CREATE TABLE credit.credit_accounts (
 
 -- credit.credit_transactions  (DBML §18)
 -- Append-only ledger. idempotency_key prevents duplicate charges.
-CREATE TABLE credit.credit_transactions (
+CREATE TABLE IF NOT EXISTS credit.credit_transactions (
   id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id       UUID        NOT NULL REFERENCES credit.credit_accounts(id),
   student_id       UUID        NOT NULL REFERENCES org.students(id) ON DELETE CASCADE,
@@ -24,12 +24,12 @@ CREATE TABLE credit.credit_transactions (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX uq_credit_tx_idempotency ON credit.credit_transactions (idempotency_key);
-CREATE INDEX idx_credit_tx_student_created   ON credit.credit_transactions (student_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_credit_tx_idempotency ON credit.credit_transactions (idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_credit_tx_student_created   ON credit.credit_transactions (student_id, created_at);
 
 
 -- credit.credit_policies  (DBML §18)
-CREATE TABLE credit.credit_policies (
+CREATE TABLE IF NOT EXISTS credit.credit_policies (
   id                       UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   scope_type               VARCHAR,
   institution_id           UUID        REFERENCES org.institutions(id),

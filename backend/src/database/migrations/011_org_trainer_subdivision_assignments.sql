@@ -1,4 +1,4 @@
-CREATE TABLE org.trainer_subdivision_assignments (
+CREATE TABLE IF NOT EXISTS org.trainer_subdivision_assignments (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   trainer_id      UUID NOT NULL REFERENCES identity.users(id) ON DELETE CASCADE,
   subdivision_id  UUID NOT NULL REFERENCES org.subdivisions(id) ON DELETE CASCADE,

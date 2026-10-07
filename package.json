@@ -5,7 +5,12 @@
   "description": "Institutional Communication Readiness & Placement Preparation Platform",
   "scripts": {
     "dev": "npm --prefix frontend run dev",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:all": "npx concurrently -k -n \"FRONTEND,BACKEND\" -c \"cyan,green\" \"npm --prefix frontend run dev\" \"npm --prefix backend run dev\"",
+    "dev:complete": "powershell -ExecutionPolicy Bypass -File .\\start-complete.ps1",
     "build": "npm --prefix frontend run build",
+    "build:backend": "npm --prefix backend run build",
+    "build:all": "npm --prefix backend run build && npm --prefix frontend run build",
     "preview": "npm --prefix frontend run preview"
   }
 }

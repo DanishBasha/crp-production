@@ -1,4 +1,8 @@
 export type UserRole =
+  | 'PLATFORM_OWNER'
+  | 'SUPER_ADMIN'
+  | 'DEPARTMENT_ADMIN'
+  | 'COUNSELLOR'
   | 'STUDENT'
   | 'FACULTY_MENTOR'
   | 'PROGRAM_ADMIN'
@@ -10,4 +14,6 @@ export const STAFF_ROLES: UserRole[] = [
   'PROGRAM_ADMIN',
   'TRAINER',
   'PLACEMENT_COORDINATOR',
+  'DEPARTMENT_ADMIN',
+  'COUNSELLOR',
 ];

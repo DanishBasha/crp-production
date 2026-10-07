@@ -790,7 +790,7 @@ export const LandingPage: React.FC = () => {
                   <p className="text-[#ededed]">├── Super Admin (admin@college.edu)</p>
                   <p className="text-[#adadad]">│   └── Dean / Program Admin (program@college.edu)</p>
                   <p className="text-[#adadad]">│       ├── Department Admin: CSE, IT, ECE</p>
-                  <p className="text-[#adadad]">│       │   └── Faculty Mentors (Dr. Ranganathan)</p>
+                  <p className="text-[#adadad]">│       │   └── Faculty Mentors &amp; Class Counselors</p>
                   <p className="text-[#0065ff] font-semibold">│       │       └── 3,000+ Enrolled Candidates</p>
                 </div>
               </div>

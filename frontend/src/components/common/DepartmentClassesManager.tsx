@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { DepartmentClass } from '../../types';
-import { MOCK_DEPARTMENT_CLASSES, MOCK_DEPARTMENT_STAFF } from '../../data/mockData';
+
 import { 
   Building2, 
   Users, 
@@ -101,7 +101,7 @@ export const DepartmentClassesManager: React.FC<DepartmentClassesManagerProps> =
       const saved = localStorage.getItem('crp_department_classes');
       if (saved) return JSON.parse(saved);
     } catch {}
-    return MOCK_DEPARTMENT_CLASSES;
+    return [];
   });
 
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -179,28 +179,9 @@ export const DepartmentClassesManager: React.FC<DepartmentClassesManagerProps> =
       });
     };
 
-    // 1. Standard default institutional faculty & counselors
-    const defaultStaff = [
-      { key: 'def-1', name: 'Dr. B. Vijayalakshmi', email: 'admin.it@college.edu', department: 'Information Technology', role: 'Associate Professor & Class Counselor' },
-      { key: 'def-2', name: 'Prof. K. Venkatesh', email: 'venkatesh.k@college.edu', department: 'Information Technology', role: 'Senior Assistant Professor' },
-      { key: 'def-3', name: 'Dr. A. Murugan', email: 'admin.cse@college.edu', department: 'Computer Science & Engineering', role: 'Professor & Counselor' },
-      { key: 'def-4', name: 'Dr. S. Ranganathan', email: 'ranganathan.s@college.edu', department: 'Information Technology', role: 'Professor & Research Mentor' },
-      { key: 'def-5', name: 'Dr. K. Chandrasekar', email: 'admin.ece@college.edu', department: 'Electronics & Communication', role: 'Associate Professor' },
-      { key: 'def-6', name: 'Dr. M. Sangeetha', email: 'admin.aids@college.edu', department: 'Artificial Intelligence & Data Science', role: 'Counselor' },
-      { key: 'def-7', name: 'Dr. R. Kannan', email: 'admin.mech@college.edu', department: 'Mechanical Engineering', role: 'Assistant Professor' },
-      { key: 'def-8', name: 'Dr. V. Ramanathan', email: 'admin.ies@college.edu', department: 'Information & Electrical Sciences', role: 'Faculty Counselor' },
-      { key: 'def-9', name: 'Prof. Hope Administrator', email: 'hope@college.edu', department: 'Academic Coordination', role: 'Program Admin' },
-    ];
-    defaultStaff.forEach(s => registerStaff(s.key, s.name, s.email, s.department, s.role));
+    // 1. LocalStorage crp_department_staff (Department Faculty Directory added by Admins)
 
-    // 2. MOCK_DEPARTMENT_STAFF from mockData (standard department staff directory)
-    if (Array.isArray(MOCK_DEPARTMENT_STAFF)) {
-      MOCK_DEPARTMENT_STAFF.forEach((s: any, idx: number) => {
-        if (s && s.name) {
-          registerStaff(s.id || `mockstaff-${idx}`, s.name, s.email, s.department, s.designation);
-        }
-      });
-    }
+
 
     // 3. LocalStorage crp_department_staff (Department Faculty Directory added by Dept Admins)
     try {

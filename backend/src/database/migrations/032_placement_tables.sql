@@ -1,5 +1,5 @@
 -- placement.checklist_items  (DBML §22)
-CREATE TABLE placement.checklist_items (
+CREATE TABLE IF NOT EXISTS placement.checklist_items (
   id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   program_id     UUID        NOT NULL REFERENCES org.programs(id) ON DELETE CASCADE,
   subdivision_id UUID        REFERENCES org.subdivisions(id) ON DELETE SET NULL,
@@ -14,12 +14,12 @@ CREATE TABLE placement.checklist_items (
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX uq_checklist_program_name ON placement.checklist_items (program_id, name);
-CREATE INDEX idx_checklist_program_sub         ON placement.checklist_items (program_id, subdivision_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_checklist_program_name ON placement.checklist_items (program_id, name);
+CREATE INDEX IF NOT EXISTS idx_checklist_program_sub         ON placement.checklist_items (program_id, subdivision_id);
 
 
 -- placement.checklist_progress  (DBML §22)
-CREATE TABLE placement.checklist_progress (
+CREATE TABLE IF NOT EXISTS placement.checklist_progress (
   id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id        UUID        NOT NULL REFERENCES org.students(id) ON DELETE CASCADE,
   checklist_item_id UUID        NOT NULL REFERENCES placement.checklist_items(id) ON DELETE CASCADE,
@@ -30,12 +30,12 @@ CREATE TABLE placement.checklist_progress (
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX uq_checklist_progress_student_item ON placement.checklist_progress (student_id, checklist_item_id);
-CREATE INDEX idx_checklist_progress_student_status     ON placement.checklist_progress (student_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_checklist_progress_student_item ON placement.checklist_progress (student_id, checklist_item_id);
+CREATE INDEX IF NOT EXISTS idx_checklist_progress_student_status     ON placement.checklist_progress (student_id, status);
 
 
 -- placement.mentor_verifications  (DBML §22)
-CREATE TABLE placement.mentor_verifications (
+CREATE TABLE IF NOT EXISTS placement.mentor_verifications (
   id                    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id            UUID        NOT NULL REFERENCES org.students(id) ON DELETE CASCADE,
   mentor_user_id        UUID        NOT NULL REFERENCES identity.users(id),
@@ -48,13 +48,13 @@ CREATE TABLE placement.mentor_verifications (
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_mentor_verifications_student_type   ON placement.mentor_verifications (student_id, verification_type);
-CREATE INDEX idx_mentor_verifications_mentor_student ON placement.mentor_verifications (mentor_user_id, student_id);
-CREATE INDEX idx_mentor_verifications_checklist      ON placement.mentor_verifications (checklist_progress_id);
+CREATE INDEX IF NOT EXISTS idx_mentor_verifications_student_type   ON placement.mentor_verifications (student_id, verification_type);
+CREATE INDEX IF NOT EXISTS idx_mentor_verifications_mentor_student ON placement.mentor_verifications (mentor_user_id, student_id);
+CREATE INDEX IF NOT EXISTS idx_mentor_verifications_checklist      ON placement.mentor_verifications (checklist_progress_id);
 
 
 -- placement.placement_eligibility  (DBML §22)
-CREATE TABLE placement.placement_eligibility (
+CREATE TABLE IF NOT EXISTS placement.placement_eligibility (
   id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id      UUID        NOT NULL UNIQUE REFERENCES org.students(id) ON DELETE CASCADE,
   total_score     NUMERIC,

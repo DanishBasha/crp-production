@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
-import { LISTENING_PASSAGES, MOCK_DEPARTMENT_CLASSES } from '../../data/mockData';
+import { LISTENING_PASSAGES } from '../../data/mockData';
 import { InterviewAssignment, DynamicProgram } from '../../types';
 import { 
   Mic, 
@@ -113,7 +113,7 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
       const saved = localStorage.getItem('crp_department_classes');
       if (saved) return JSON.parse(saved);
     } catch {}
-    return MOCK_DEPARTMENT_CLASSES;
+    return [];
   });
 
   // Filter classes belonging to the selected department

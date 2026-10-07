@@ -1,0 +1,62 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ai-service:
+    build: ./ai-service
+    restart: unless-stopped
+    env_file:
+      - ./ai-service/.env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MODULE3_PERFORMANCE_CACHE_TTL: "600"
+      MODULE3_SKILL_GAP_CACHE_TTL: "600"
+      MODULE3_KNOWLEDGE_CACHE_TTL: "3600"
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      AI_SERVICE_URL: http://ai-service:8000
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "5000:5000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      ai-service:
+        condition: service_started
+
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+      - ai-service
+
+volumes:
+  redis_data:

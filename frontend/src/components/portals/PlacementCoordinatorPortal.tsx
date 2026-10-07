@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
-import { MOCK_MENTEES_LIST } from '../../data/mockData';
+
 import { AssignSessionModal } from '../common/AssignSessionModal';
 import { StudentDirectoryTable } from '../common/StudentDirectoryTable';
 import { StudentHistoryModal } from '../common/StudentHistoryModal';
@@ -41,9 +41,9 @@ export const PlacementCoordinatorPortal: React.FC = () => {
   const [candidates, setCandidates] = useState<any[]>(() => {
     try {
       const stored = localStorage.getItem('admin_students');
-      return stored ? JSON.parse(stored) : MOCK_MENTEES_LIST;
+      return stored ? JSON.parse(stored) : [];
     } catch {
-      return MOCK_MENTEES_LIST;
+      return [];
     }
   });
 

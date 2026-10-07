@@ -1,0 +1,30 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            echo "--> Pulling latest changes from GitHub..."
+            cd ~/crp
+            git pull origin main
+            echo "--> Rebuilding and updating Docker containers..."
+            sudo docker compose -f docker-compose.prod.yml up -d --build
+            echo "--> Checking container status..."
+            sudo docker compose -f docker-compose.prod.yml ps
+            echo "--> Deployment finished successfully!"

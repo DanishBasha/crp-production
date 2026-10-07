@@ -3,7 +3,7 @@
 -- assessment_count and last_assessment_at are operational additions required by
 -- the ATTEMPT_COMPLETED handler to compute incremental running averages.
 
-CREATE TABLE performance.performance_profiles (
+CREATE TABLE IF NOT EXISTS performance.performance_profiles (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id             UUID NOT NULL UNIQUE,
     technical_score        NUMERIC(5,2) NOT NULL DEFAULT 0,

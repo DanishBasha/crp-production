@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
 import { InterviewAssignment, DepartmentClass } from '../../types';
-import { MOCK_DEPARTMENT_CLASSES } from '../../data/mockData';
+
 import { AssignSessionModal } from '../common/AssignSessionModal';
 import { StudentDirectoryTable } from '../common/StudentDirectoryTable';
 import { 
@@ -32,9 +32,9 @@ export const CounsellorPortal: React.FC = () => {
     setInspectedStudent
   } = useApp();
 
-  const counsellorName = currentUser?.name || 'Dr. B. Vijayalakshmi';
-  const counsellorDept = currentUser?.department || 'Information Technology';
-  const defaultClass = currentUser?.assignedClassName || '2nd Year IT - Section A';
+  const counsellorName = currentUser?.name || 'Class Counsellor';
+  const counsellorDept = currentUser?.department || '';
+  const defaultClass = currentUser?.assignedClassName || '';
 
   const [activeTab, setActiveTab] = useState<'STUDENTS' | 'ASSIGNMENTS' | 'VERIFICATIONS' | 'INSIGHTS'>('STUDENTS');
   const [selectedClass, setSelectedClass] = useState<string>(defaultClass);
@@ -60,12 +60,6 @@ export const CounsellorPortal: React.FC = () => {
       }
     } catch {}
 
-    // Mock fallback only for mock counselor Dr. B. Vijayalakshmi / counselor.it
-    if (counsellorName.toLowerCase().includes('vijayalakshmi') || (currentUser?.email && currentUser.email.includes('counselor.it'))) {
-      return MOCK_DEPARTMENT_CLASSES.filter(c => 
-        (c.facultyInCharge && c.facultyInCharge.toLowerCase().includes('vijayalakshmi'))
-      );
-    }
     return [];
   });
 
@@ -126,11 +120,11 @@ export const CounsellorPortal: React.FC = () => {
   };
 
   const avgScore = classStudents.length > 0
-    ? Math.round(classStudents.reduce((acc, s) => acc + (s.score || s.overallReadiness || 78), 0) / classStudents.length)
-    : 81;
+    ? Math.round(classStudents.reduce((acc, s) => acc + (s.score || s.overallReadiness || 0), 0) / classStudents.length)
+    : 0;
 
-  const placementReadyCount = classStudents.filter(s => (s.score || s.overallReadiness || 78) >= 75).length;
-  const atRiskCount = classStudents.filter(s => (s.score || s.overallReadiness || 78) < 60).length;
+  const placementReadyCount = classStudents.filter(s => (s.score || s.overallReadiness || 0) >= 75).length;
+  const atRiskCount = classStudents.filter(s => (s.score || s.overallReadiness || 0) > 0 && (s.score || s.overallReadiness || 0) < 60).length;
 
   // If the staff member is not currently assigned as counselor of any class, show holding splash page
   if (counsellorClasses.length === 0) {
@@ -521,7 +515,7 @@ export const CounsellorPortal: React.FC = () => {
                       Task: <strong>Solve 50 LeetCode Medium Questions &amp; Ground Resume</strong> (Proof Submitted)
                     </p>
                     <p className="text-[11px] text-neutral-400 font-mono">
-                      Target Score: {stu.score || 78}% · Checklist: {stu.checklist || '3/5'} Completed
+                      Target Score: {stu.score || 0}% · Checklist: {stu.checklist || '0/0'} Completed
                     </p>
                   </div>
 
@@ -557,35 +551,39 @@ export const CounsellorPortal: React.FC = () => {
               <TrendingUp className="w-4 h-4 text-emerald-600" />
               <span>Speaking Speed &amp; Pace Distribution</span>
             </h3>
-            <div className="space-y-3 pt-2">
-              <div>
-                <div className="flex justify-between text-xs font-semibold mb-1">
-                  <span>Optimal Pace (120–150 WPM)</span>
-                  <span className="text-emerald-700">68% of Class</span>
+            {classStudents.length === 0 ? (
+              <p className="text-xs text-neutral-400 py-6 text-center italic">No speech telemetry available for this class.</p>
+            ) : (
+              <div className="space-y-3 pt-2">
+                <div>
+                  <div className="flex justify-between text-xs font-semibold mb-1">
+                    <span>Optimal Pace (120–150 WPM)</span>
+                    <span className="text-emerald-700">0% of Class</span>
+                  </div>
+                  <div className="w-full bg-neutral-100 rounded-full h-2">
+                    <div className="bg-emerald-600 h-2 rounded-full" style={{ width: '0%' }} />
+                  </div>
                 </div>
-                <div className="w-full bg-neutral-100 rounded-full h-2">
-                  <div className="bg-emerald-600 h-2 rounded-full" style={{ width: '68%' }} />
+                <div>
+                  <div className="flex justify-between text-xs font-semibold mb-1">
+                    <span>Slow / Hesitant Pace (&lt;110 WPM)</span>
+                    <span className="text-amber-700">0% of Class</span>
+                  </div>
+                  <div className="w-full bg-neutral-100 rounded-full h-2">
+                    <div className="bg-amber-500 h-2 rounded-full" style={{ width: '0%' }} />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-xs font-semibold mb-1">
+                    <span>Rapid Pace / High Fillers (&gt;160 WPM)</span>
+                    <span className="text-rose-700">0% of Class</span>
+                  </div>
+                  <div className="w-full bg-neutral-100 rounded-full h-2">
+                    <div className="bg-rose-500 h-2 rounded-full" style={{ width: '0%' }} />
+                  </div>
                 </div>
               </div>
-              <div>
-                <div className="flex justify-between text-xs font-semibold mb-1">
-                  <span>Slow / Hesitant Pace (&lt;110 WPM)</span>
-                  <span className="text-amber-700">22% of Class</span>
-                </div>
-                <div className="w-full bg-neutral-100 rounded-full h-2">
-                  <div className="bg-amber-500 h-2 rounded-full" style={{ width: '22%' }} />
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between text-xs font-semibold mb-1">
-                  <span>Rapid Pace / High Fillers (&gt;160 WPM)</span>
-                  <span className="text-rose-700">10% of Class</span>
-                </div>
-                <div className="w-full bg-neutral-100 rounded-full h-2">
-                  <div className="bg-rose-500 h-2 rounded-full" style={{ width: '10%' }} />
-                </div>
-              </div>
-            </div>
+            )}
           </div>
 
           <div className="bg-white border border-neutral-200/90 rounded-2xl p-6 shadow-xs space-y-4">
@@ -594,21 +592,25 @@ export const CounsellorPortal: React.FC = () => {
               <span>At-Risk Students Requiring 1-on-1 Guidance</span>
             </h3>
             <div className="divide-y divide-neutral-100 pt-1">
-              {classStudents.filter(s => (s.score || 75) < 70).slice(0, 3).map((stu, idx) => (
-                <div key={idx} className="py-2.5 flex items-center justify-between">
-                  <div>
-                    <p className="font-semibold text-xs text-neutral-900">{stu.name}</p>
-                    <p className="text-[11px] font-mono text-neutral-500">{stu.rollNumber} · Score: {stu.score || 58}%</p>
+              {classStudents.filter(s => (s.score || 0) > 0 && (s.score || 0) < 70).length === 0 ? (
+                <p className="text-xs text-neutral-400 py-6 text-center italic">No at-risk candidates detected in this class.</p>
+              ) : (
+                classStudents.filter(s => (s.score || 0) > 0 && (s.score || 0) < 70).slice(0, 3).map((stu, idx) => (
+                  <div key={idx} className="py-2.5 flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold text-xs text-neutral-900">{stu.name}</p>
+                      <p className="text-[11px] font-mono text-neutral-500">{stu.rollNumber} · Score: {stu.score || 0}%</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setInspectedStudent(stu)}
+                      className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-semibold rounded-lg cursor-pointer"
+                    >
+                      Open Student Profile
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setInspectedStudent(stu)}
-                    className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-semibold rounded-lg cursor-pointer"
-                  >
-                    Open Student Profile
-                  </button>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </div>

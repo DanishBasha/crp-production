@@ -1,4 +1,4 @@
-CREATE TABLE org.institutions (
+CREATE TABLE IF NOT EXISTS org.institutions (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name        VARCHAR(255) NOT NULL,
   code        VARCHAR(50) UNIQUE NOT NULL,

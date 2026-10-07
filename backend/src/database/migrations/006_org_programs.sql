@@ -1,4 +1,4 @@
-CREATE TABLE org.programs (
+CREATE TABLE IF NOT EXISTS org.programs (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   institution_id  UUID NOT NULL REFERENCES org.institutions(id) ON DELETE RESTRICT,
   name            VARCHAR(255) NOT NULL,

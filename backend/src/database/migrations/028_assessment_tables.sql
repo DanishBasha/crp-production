@@ -1,5 +1,5 @@
 -- assessment.assessments  (DBML §7)
-CREATE TABLE assessment.assessments (
+CREATE TABLE IF NOT EXISTS assessment.assessments (
   id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   name            VARCHAR,
   assessment_type VARCHAR,
@@ -11,11 +11,11 @@ CREATE TABLE assessment.assessments (
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX uq_assessments_id_version ON assessment.assessments (id, version);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_assessments_id_version ON assessment.assessments (id, version);
 
 
 -- assessment.assessment_components  (DBML §7)
-CREATE TABLE assessment.assessment_components (
+CREATE TABLE IF NOT EXISTS assessment.assessment_components (
   id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   assessment_id  UUID        NOT NULL REFERENCES assessment.assessments(id) ON DELETE CASCADE,
   component_type VARCHAR,
@@ -26,13 +26,13 @@ CREATE TABLE assessment.assessment_components (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX uq_assessment_component_type
+CREATE UNIQUE INDEX IF NOT EXISTS uq_assessment_component_type
   ON assessment.assessment_components (assessment_id, component_type);
 
 
 -- assessment.assessment_attempts  (DBML §8)
 -- Includes immutable org snapshot columns + scoring metadata.
-CREATE TABLE assessment.assessment_attempts (
+CREATE TABLE IF NOT EXISTS assessment.assessment_attempts (
   id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   assessment_id           UUID        NOT NULL REFERENCES assessment.assessments(id),
   student_id              UUID        NOT NULL REFERENCES org.students(id) ON DELETE CASCADE,
@@ -51,14 +51,14 @@ CREATE TABLE assessment.assessment_attempts (
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_attempts_student_assessment  ON assessment.assessment_attempts (student_id, assessment_id);
-CREATE INDEX idx_attempts_student_status      ON assessment.assessment_attempts (student_id, status);
-CREATE INDEX idx_attempts_org                 ON assessment.assessment_attempts (program_id, batch_id, subdivision_id);
-CREATE INDEX idx_attempts_conducted_key       ON assessment.assessment_attempts (student_id, conducted_event_key);
+CREATE INDEX IF NOT EXISTS idx_attempts_student_assessment  ON assessment.assessment_attempts (student_id, assessment_id);
+CREATE INDEX IF NOT EXISTS idx_attempts_student_status      ON assessment.assessment_attempts (student_id, status);
+CREATE INDEX IF NOT EXISTS idx_attempts_org                 ON assessment.assessment_attempts (program_id, batch_id, subdivision_id);
+CREATE INDEX IF NOT EXISTS idx_attempts_conducted_key       ON assessment.assessment_attempts (student_id, conducted_event_key);
 
 
 -- session.assessment_sessions  (DBML §8)
-CREATE TABLE session.assessment_sessions (
+CREATE TABLE IF NOT EXISTS session.assessment_sessions (
   id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   attempt_id        UUID        NOT NULL UNIQUE REFERENCES assessment.assessment_attempts(id) ON DELETE CASCADE,
   current_sequence_no INTEGER,

@@ -54,7 +54,7 @@ export const StudentDirectoryTable: React.FC<StudentDirectoryTableProps> = ({
       if (!matchName && !matchRoll && !matchEmail && !matchDept && !matchBatch) return false;
     }
 
-    const readiness = s.overallReadiness ?? (s.recentReports?.[0]?.overallScore || 75);
+    const readiness = s.overallReadiness ?? (s.recentReports?.[0]?.overallScore || 0);
     if (statusFilter === 'READY' && readiness < 80) return false;
     if (statusFilter === 'IN_PROGRESS' && (readiness < 60 || readiness >= 80)) return false;
     if (statusFilter === 'NEEDS_ATTENTION' && readiness >= 60) return false;
@@ -172,7 +172,7 @@ export const StudentDirectoryTable: React.FC<StudentDirectoryTableProps> = ({
             </thead>
             <tbody className="divide-y divide-neutral-100">
               {sorted.map((student) => {
-                const readiness = student.overallReadiness ?? (student.recentReports?.[0]?.overallScore || 75);
+                const readiness = student.overallReadiness ?? (student.recentReports?.[0]?.overallScore || 0);
                 const drillsCount = (student.recentReports?.length || 0);
 
                 return (

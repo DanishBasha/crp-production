@@ -1,5 +1,5 @@
 -- No FK to identity.users — log survives user deletion
-CREATE TABLE system.audit_logs (
+CREATE TABLE IF NOT EXISTS system.audit_logs (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id        UUID NOT NULL,
   action         VARCHAR(100) NOT NULL,

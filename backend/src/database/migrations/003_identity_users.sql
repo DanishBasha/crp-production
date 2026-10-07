@@ -12,7 +12,7 @@ CREATE TYPE identity.user_status AS ENUM (
   'SUSPENDED'
 );
 
-CREATE TABLE identity.users (
+CREATE TABLE IF NOT EXISTS identity.users (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name           VARCHAR(255) NOT NULL,
   email          VARCHAR(255) UNIQUE NOT NULL CHECK (email = lower(email)),

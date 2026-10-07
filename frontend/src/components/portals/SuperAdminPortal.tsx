@@ -942,10 +942,14 @@ export const SuperAdminPortal: React.FC = () => {
                     }
                     return matchesP;
                   });
-                  const highPerformers = enrolledInProg.filter(s => (s.score || 70) >= 75);
+                  const highPerformers = enrolledInProg.filter(s => (s.score || 0) >= 75);
                   const avgScore = enrolledInProg.length > 0 
-                    ? Math.round(enrolledInProg.reduce((acc, s) => acc + (s.score || 70), 0) / enrolledInProg.length)
-                    : 74;
+                    ? Math.round(enrolledInProg.reduce((acc, s) => acc + (s.score || 0), 0) / enrolledInProg.length)
+                    : 0;
+                  const progAssignments = assignments.filter((a: any) => 
+                    a.programName === selectedProgramProfile.program.name || 
+                    a.programId === selectedProgramProfile.program.id
+                  );
 
                   return (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 border-t border-neutral-100">
@@ -957,7 +961,7 @@ export const SuperAdminPortal: React.FC = () => {
 
                       <div className="p-4 bg-neutral-50 rounded-xl border border-neutral-200/80">
                         <span className="text-[11px] font-medium text-neutral-500 block">Assessments Assigned</span>
-                        <div className="text-2xl font-bold text-blue-600 mt-1">6</div>
+                        <div className="text-2xl font-bold text-blue-600 mt-1">{progAssignments.length}</div>
                         <span className="text-[10px] text-neutral-400">Voice &amp; Audio Drills</span>
                       </div>
 
@@ -1059,8 +1063,8 @@ export const SuperAdminPortal: React.FC = () => {
                               </span>
                             </td>
                             <td className="py-3 px-4">
-                              <span className={`font-bold ${s.score >= 75 ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                {s.score || 70}%
+                              <span className={`font-bold ${(s.score || 0) >= 75 ? 'text-emerald-600' : 'text-neutral-900'}`}>
+                                {s.score || 0}%
                               </span>
                             </td>
                             <td className="py-3 px-4 text-right">
@@ -1450,8 +1454,8 @@ export const SuperAdminPortal: React.FC = () => {
                     filteredDepartments.map((dept) => {
                       const deptStudents = students.filter(s => s.department === dept.name);
                       const avgScore = deptStudents.length > 0 
-                        ? Math.round(deptStudents.reduce((acc, s) => acc + (s.score || 70), 0) / deptStudents.length)
-                        : 72;
+                        ? Math.round(deptStudents.reduce((acc, s) => acc + (s.score || 0), 0) / deptStudents.length)
+                        : 0;
 
                       return (
                         <tr 
@@ -1809,11 +1813,11 @@ export const SuperAdminPortal: React.FC = () => {
               {(() => {
                 const deptStudents = students.filter(s => s.department === selectedDeptForProgress.name);
                 const avgScore = deptStudents.length > 0
-                  ? Math.round(deptStudents.reduce((acc, s) => acc + (s.score || 70), 0) / deptStudents.length)
-                  : 72;
-                const topCount = deptStudents.filter(s => (s.score || 70) >= 75).length;
-                const midCount = deptStudents.filter(s => (s.score || 70) >= 60 && (s.score || 70) < 75).length;
-                const needCount = deptStudents.filter(s => (s.score || 70) < 60).length;
+                  ? Math.round(deptStudents.reduce((acc, s) => acc + (s.score || 0), 0) / deptStudents.length)
+                  : 0;
+                const topCount = deptStudents.filter(s => (s.score || 0) >= 75).length;
+                const midCount = deptStudents.filter(s => (s.score || 0) >= 60 && (s.score || 0) < 75).length;
+                const needCount = deptStudents.filter(s => (s.score || 0) > 0 && (s.score || 0) < 60).length;
 
                 return (
                   <>
@@ -1896,8 +1900,8 @@ export const SuperAdminPortal: React.FC = () => {
                                     </span>
                                   </td>
                                   <td className="py-2.5 px-4">
-                                    <span className={`font-bold ${s.score >= 75 ? 'text-emerald-600' : 'text-neutral-900'}`}>
-                                      {s.score || 70}%
+                                    <span className={`font-bold ${(s.score || 0) >= 75 ? 'text-emerald-600' : 'text-neutral-900'}`}>
+                                      {s.score || 0}%
                                     </span>
                                   </td>
                                 </tr>

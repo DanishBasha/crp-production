@@ -85,10 +85,10 @@ export const StudentManagementDashboardModal: React.FC<StudentManagementDashboar
   const [editName, setEditName] = useState(initialStudent?.name || '');
   const [editRoll, setEditRoll] = useState(initialStudent?.rollNumber || initialStudent?.roll_number || '');
   const [editEmail, setEditEmail] = useState(initialStudent?.email || '');
-  const [editDept, setEditDept] = useState(initialStudent?.department || 'Information Technology');
+  const [editDept, setEditDept] = useState(initialStudent?.department || '');
   const [editProgram, setEditProgram] = useState(initialStudent?.programName || '');
   const [editClass, setEditClass] = useState(initialStudent?.className || initialStudent?.section || '');
-  const [editBatch, setEditBatch] = useState(initialStudent?.batchYear || 2026);
+  const [editBatch, setEditBatch] = useState(initialStudent?.batchYear || new Date().getFullYear());
   const [editPassword, setEditPassword] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -174,7 +174,7 @@ export const StudentManagementDashboardModal: React.FC<StudentManagementDashboar
     }
   };
 
-  const readinessScore = student.overallReadiness ?? student.score ?? (historyData?.student?.score || 78);
+  const readinessScore = student.overallReadiness ?? student.score ?? (historyData?.student?.score || 0);
   const interviewSessions = historyData?.interviewSessions || student.recentReports || [];
   const checklist = historyData?.checklist || student.criteriaTasks || [];
 
@@ -192,7 +192,7 @@ export const StudentManagementDashboardModal: React.FC<StudentManagementDashboar
               <div className="flex items-center space-x-2">
                 <h2 className="text-base font-bold text-neutral-900">{student.name}</h2>
                 <span className="font-mono text-xs px-2 py-0.5 bg-white border border-neutral-200 rounded-lg text-neutral-700 font-semibold">
-                  {student.rollNumber || student.roll_number || '22IT1042'}
+                  {student.rollNumber || student.roll_number || '—'}
                 </span>
                 <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-lg border text-xs font-bold font-mono ${
                   (student.coins ?? 5) === 0 
@@ -215,7 +215,7 @@ export const StudentManagementDashboardModal: React.FC<StudentManagementDashboar
               <p className="text-xs text-neutral-500 font-mono mt-0.5 flex items-center space-x-2">
                 <span>{student.email}</span>
                 <span>•</span>
-                <span>{student.department || 'Information Technology'}</span>
+                <span>{student.department || '—'}</span>
                 {student.programName && (
                   <>
                     <span>•</span>
@@ -356,7 +356,7 @@ export const StudentManagementDashboardModal: React.FC<StudentManagementDashboar
                   <span className="text-[10px] text-neutral-500 uppercase tracking-wider block font-bold">Mock Interviews</span>
                   <div className="flex items-baseline space-x-1 mt-1">
                     <span className="text-2xl font-black font-mono text-neutral-900">
-                      {interviewSessions.filter((s: any) => s.sessionType === 'MOCK_INTERVIEW').length || 2}
+                      {interviewSessions.filter((s: any) => s.sessionType === 'MOCK_INTERVIEW').length}
                     </span>
                     <span className="text-[10px] text-neutral-400">completed</span>
                   </div>
@@ -366,7 +366,7 @@ export const StudentManagementDashboardModal: React.FC<StudentManagementDashboar
                   <span className="text-[10px] text-neutral-500 uppercase tracking-wider block font-bold">Listening Comprehensions</span>
                   <div className="flex items-baseline space-x-1 mt-1">
                     <span className="text-2xl font-black font-mono text-neutral-900">
-                      {interviewSessions.filter((s: any) => s.sessionType === 'LISTENING_COMPREHENSION').length || 1}
+                      {interviewSessions.filter((s: any) => s.sessionType === 'LISTENING_COMPREHENSION').length}
                     </span>
                     <span className="text-[10px] text-neutral-400">completed</span>
                   </div>
@@ -397,7 +397,7 @@ export const StudentManagementDashboardModal: React.FC<StudentManagementDashboar
                   <div className="divide-y divide-neutral-100 border border-neutral-200/80 rounded-xl overflow-hidden">
                     {interviewSessions.map((sess: any, idx: number) => {
                       const isInterview = sess.sessionType === 'MOCK_INTERVIEW';
-                      const score = sess.overallScore || sess.score || 78;
+                      const score = sess.overallScore || sess.score || 0;
                       return (
                         <div key={idx} className="p-3 hover:bg-neutral-50/60 transition-colors flex items-center justify-between gap-3">
                           <div className="flex items-center space-x-2.5">
@@ -409,7 +409,7 @@ export const StudentManagementDashboardModal: React.FC<StudentManagementDashboar
                                 {isInterview ? 'Comprehensive Technical & System Interview' : 'Industrial Multi-Speaker Audio Comprehension Lab'}
                               </p>
                               <p className="text-[10px] font-mono text-neutral-400">
-                                {sess.createdAt || sess.date || '2026-09-28'} • Difficulty: {sess.difficulty || 'MEDIUM'}
+                                {sess.createdAt || sess.date || '—'} • Difficulty: {sess.difficulty || 'MEDIUM'}
                               </p>
                             </div>
                           </div>

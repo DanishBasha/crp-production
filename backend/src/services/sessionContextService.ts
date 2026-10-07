@@ -106,7 +106,7 @@ export class SessionContextService {
     try {
       const redis = await getRedis();
       const items = await redis.lRange(this.contextKey(sessionId), -lastN, -1);
-      return items.map((raw) => JSON.parse(raw) as TurnContext);
+      return items.map((raw: string) => JSON.parse(raw) as TurnContext);
     } catch (err) {
       console.error('[SessionContext] getTurns error:', err);
       return [];

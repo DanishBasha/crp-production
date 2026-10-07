@@ -49,86 +49,14 @@ export const ProgramActivityLogsPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('ALL');
 
-  // Realistic mock audit log events tailored to this specific program
-  const [logs] = useState<ActivityLogEntry[]>([
-    {
-      id: 'log-101',
-      timestamp: '2026-09-29 14:15:20',
-      action: 'DRILL_DISPATCHED',
-      actor: currentUser?.name || 'Super Administrator',
-      actorRole: currentUser?.role || 'SUPER_ADMIN',
-      target: 'Full Stack & Web Systems Mock Interview',
-      status: 'SUCCESS',
-      details: `Scheduled drill dispatched to ${program.name} students with 09:00 - 18:00 timer window.`,
-      ipAddress: '192.168.1.104'
-    },
-    {
-      id: 'log-102',
-      timestamp: '2026-09-29 13:50:11',
-      action: 'INTERVIEW_COMPLETED',
-      actor: 'Harish K (21CS1084)',
-      actorRole: 'STUDENT',
-      target: 'Voice AI Mock Interview Round #3',
-      status: 'SUCCESS',
-      details: 'Student scored 88% overall. 5 verbal turns completed. Proctoring checks clean.',
-      ipAddress: '192.168.1.189'
-    },
-    {
-      id: 'log-103',
-      timestamp: '2026-09-29 13:22:45',
-      action: 'LISTENING_COMPLETED',
-      actor: 'Sneha Patel (21IT1029)',
-      actorRole: 'STUDENT',
-      target: 'Fintech Payments Microservices Audio Briefing',
-      status: 'SUCCESS',
-      details: 'Listening comprehension: 92% retention accuracy with zero visual subtitle prompts.',
-      ipAddress: '192.168.1.205'
-    },
-    {
-      id: 'log-104',
-      timestamp: '2026-09-29 12:45:00',
-      action: 'PROCTOR_VERIFIED',
-      actor: 'AI Proctor Engine v2.4',
-      actorRole: 'SYSTEM_SERVICE',
-      target: 'Candidate Session Validation',
-      status: 'SUCCESS',
-      details: 'Analyzed voice consistency and tab-focus checks across 24 concurrent submissions.',
-      ipAddress: 'internal-daemon'
-    },
-    {
-      id: 'log-105',
-      timestamp: '2026-09-29 11:30:18',
-      action: 'CRITERIA_VERIFIED',
-      actor: program.assignedAdminName || 'Lead Mentor',
-      actorRole: 'PROGRAM_ADMIN',
-      target: 'Placement Readiness Checklist',
-      status: 'INFO',
-      details: 'Verified LinkedIn technical portfolio and GitHub repositories for 14 candidates in batch.',
-      ipAddress: '192.168.1.112'
-    },
-    {
-      id: 'log-106',
-      timestamp: '2026-09-29 10:14:02',
-      action: 'FLAG_RAISED',
-      actor: 'AI Proctor Engine v2.4',
-      actorRole: 'SYSTEM_SERVICE',
-      target: 'Candidate Session 21CS1092',
-      status: 'WARNING',
-      details: 'Excessive tab switches (3 detected) during strict technical question turn. Turn flagged for mentor review.',
-      ipAddress: '192.168.1.215'
-    },
-    {
-      id: 'log-107',
-      timestamp: '2026-09-29 09:00:00',
-      action: 'ADMIN_ASSIGNED',
-      actor: 'System Initialization',
-      actorRole: 'SYSTEM',
-      target: `${program.name} Governance Delegation`,
-      status: 'INFO',
-      details: `Lead administrator ${program.assignedAdminName || 'Swaminathan K'} delegated with student activity permissions.`,
-      ipAddress: '127.0.0.1'
-    }
-  ]);
+  // Audit log events tailored to this specific program
+  const [logs] = useState<ActivityLogEntry[]>(() => {
+    try {
+      const saved = localStorage.getItem(`crp_program_logs_${program.id}`);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
 
   const filteredLogs = logs.filter(log => {
     if (filterType !== 'ALL' && log.action !== filterType) return false;

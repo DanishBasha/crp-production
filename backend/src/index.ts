@@ -5,10 +5,12 @@ import { eventBus } from './shared/events/eventBus';
 import { Events, UserRegisteredPayload } from './shared/events/events';
 import { db } from './shared/db/pool';
 import { registerModule3Handlers } from './shared/events/module3Handlers';
+import { registerM4EventHandlers } from './modules/credits/event-handlers';
 import { recoverDeadRuns } from './agents/agentRunner';
 
-// Module 3 event handlers
+// Module 3 & 4 event handlers
 registerModule3Handlers();
+registerM4EventHandlers();
 
 // M1 handler: write audit log on registration (non-blocking)
 // DBML §21: audit_logs uses actor_user_id + after_data (not user_id / metadata)

@@ -6,7 +6,16 @@ import path from 'path';
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 
 async function main(): Promise<void> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  const isRemoteDb =
+    (process.env.DATABASE_URL || '').includes('supabase') ||
+    (process.env.DATABASE_URL || '').includes('pooler') ||
+    (process.env.DATABASE_URL || '').includes('sslmode=require');
+
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: isRemoteDb ? { rejectUnauthorized: false } : undefined,
+    connectionTimeoutMillis: 15_000,
+  });
   await client.connect();
   console.log('[migrate] connected to database');
 

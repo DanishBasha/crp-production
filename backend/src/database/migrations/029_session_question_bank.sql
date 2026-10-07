@@ -1,6 +1,6 @@
 -- session.question_bank_items  (DBML §9)
 -- pgvector embedding column included.
-CREATE TABLE session.question_bank_items (
+CREATE TABLE IF NOT EXISTS session.question_bank_items (
   id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   question_text     TEXT,
   difficulty        VARCHAR,
@@ -29,7 +29,7 @@ $$;
 
 -- session.question_bank_item_skills  (DBML §9)
 -- A question can map to multiple skills.
-CREATE TABLE session.question_bank_item_skills (
+CREATE TABLE IF NOT EXISTS session.question_bank_item_skills (
   question_bank_item_id UUID    NOT NULL REFERENCES session.question_bank_items(id) ON DELETE CASCADE,
   skill_id              UUID    NOT NULL REFERENCES performance.skills(id) ON DELETE CASCADE,
   is_primary            BOOLEAN NOT NULL DEFAULT false,
@@ -39,7 +39,7 @@ CREATE TABLE session.question_bank_item_skills (
 
 -- session.questions  (DBML §10)
 -- Questions used inside a specific attempt.
-CREATE TABLE session.questions (
+CREATE TABLE IF NOT EXISTS session.questions (
   id                    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   attempt_id            UUID        NOT NULL REFERENCES assessment.assessment_attempts(id) ON DELETE CASCADE,
   question_bank_item_id UUID        REFERENCES session.question_bank_items(id),
@@ -55,5 +55,5 @@ CREATE TABLE session.questions (
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX uq_questions_attempt_seq ON session.questions (attempt_id, sequence_no);
-CREATE UNIQUE INDEX uq_questions_attempt_id  ON session.questions (attempt_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_questions_attempt_seq ON session.questions (attempt_id, sequence_no);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_questions_attempt_id  ON session.questions (attempt_id, id);

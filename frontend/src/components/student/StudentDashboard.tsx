@@ -58,7 +58,7 @@ export const StudentDashboard: React.FC = () => {
   // 3-Day Wait Period Cooldown Countdown for Independent Students at 0 coins
   const [cooldownRemainingMs, setCooldownRemainingMs] = useState<number>(() => {
     if ((student.coins ?? 5) > 0) return 0;
-    const sKey = student.id || 'stu-21cs1084';
+    const sKey = student.id || 'stu-candidate';
     const zeroStored = typeof localStorage !== 'undefined' ? localStorage.getItem(`crp_zero_coins_time_${sKey}`) : null;
     const zeroTimestamp = zeroStored ? parseInt(zeroStored, 10) : Date.now();
     const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
@@ -67,7 +67,7 @@ export const StudentDashboard: React.FC = () => {
 
   useEffect(() => {
     if ((student.coins ?? 5) > 0) return;
-    const sKey = student.id || 'stu-21cs1084';
+    const sKey = student.id || 'stu-candidate';
     let zeroStored = localStorage.getItem(`crp_zero_coins_time_${sKey}`);
     if (!zeroStored) {
       zeroStored = String(Date.now());
@@ -124,7 +124,7 @@ export const StudentDashboard: React.FC = () => {
     e.preventDefault();
     setPaymentProcessing(true);
     await new Promise(r => setTimeout(r, 1000));
-    await restoreStudentCoinsToFive(student.id || 'stu-21cs1084');
+    await restoreStudentCoinsToFive(student.id || 'stu-candidate');
     setPaymentProcessing(false);
     setPaymentSuccess(true);
     setTimeout(() => {
@@ -315,7 +315,7 @@ export const StudentDashboard: React.FC = () => {
   useEffect(() => {
     const handleStorageChange = () => {
       try {
-        const sKey = student.id || 'stu-21cs1084';
+        const sKey = student.id || 'stu-candidate';
         const saved = localStorage.getItem(`student_improvement_checklist_${sKey}`);
         if (saved) {
           setChecklist(JSON.parse(saved));
@@ -329,7 +329,7 @@ export const StudentDashboard: React.FC = () => {
   // Ensure newly completed latestReport results stack up onto the Post-Interview Checklist
   useEffect(() => {
     if (!latestReport?.id) return;
-    const sKey = student.id || 'stu-21cs1084';
+    const sKey = student.id || 'stu-candidate';
     let currentList: ImprovementChecklistItem[] = [];
     try {
       const saved = localStorage.getItem(`student_improvement_checklist_${sKey}`);
@@ -1060,7 +1060,7 @@ export const StudentDashboard: React.FC = () => {
               </div>
               <button
                 type="button"
-                onClick={() => simulateElapsedCooldown(student.id || 'stu-21cs1084')}
+                onClick={() => simulateElapsedCooldown(student.id || 'stu-candidate')}
                 className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold rounded-xl text-xs flex items-center space-x-2 shrink-0 shadow-md transition-colors cursor-pointer"
                 title="Fast-forward 3 days to test automatic credit replenishment"
               >
