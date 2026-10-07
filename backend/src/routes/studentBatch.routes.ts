@@ -103,6 +103,7 @@ studentBatchRouter.post(
         let rollNumber = '';
         let department = '';
         let programName = '';
+        let className = '';
 
         // Parse based on headers or positions
         if (headerCols.length > 0) {
@@ -113,11 +114,13 @@ studentBatchRouter.post(
             else if (col.includes('roll')) rollNumber = val;
             else if (col.includes('dept') || col.includes('department')) department = val;
             else if (col.includes('program')) programName = val;
+            else if (col.includes('class') || col.includes('section')) className = val;
           });
         } else {
           email = cols[1] || '';
           if (cols.length >= 3) rollNumber = cols[2];
           if (cols.length >= 4) department = cols[3];
+          if (cols.length >= 5) className = cols[4];
         }
 
         // Fallback: find email in any column
@@ -145,13 +148,29 @@ studentBatchRouter.post(
             [name.trim(), email.toLowerCase().trim(), passwordHash]
           );
 
-          // Create student
+          // Create or update student
           const { rows: studentRows } = await db.query(
-            `INSERT INTO org.students (user_id, program_id, batch_id, roll_number)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (roll_number) DO UPDATE SET user_id = EXCLUDED.user_id
+            `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track, program_name, class_name)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (roll_number) DO UPDATE SET
+               user_id = EXCLUDED.user_id,
+               department = EXCLUDED.department,
+               batch_year = EXCLUDED.batch_year,
+               track = EXCLUDED.track,
+               program_name = EXCLUDED.program_name,
+               class_name = COALESCE(EXCLUDED.class_name, org.students.class_name)
              RETURNING id, roll_number`,
-            [userRows[0].id, programId, batchId, rollNumber.trim().toUpperCase()]
+            [
+              userRows[0].id,
+              programId,
+              batchId,
+              rollNumber.trim().toUpperCase(),
+              department || 'Computer Science & Engineering',
+              batchYear,
+              programName || department || 'General Track',
+              programName || null,
+              className || null
+            ]
           );
 
           imported.push({
@@ -159,7 +178,7 @@ studentBatchRouter.post(
             name: name.trim(),
             email: email.toLowerCase().trim(),
             rollNumber: studentRows[0].roll_number,
-            department: department || 'General',
+            department: department || 'Computer Science & Engineering',
             batchYear,
           });
 
@@ -353,11 +372,25 @@ studentBatchRouter.post(
       );
 
       // Create student
+      const track = parsed.data.programName
+        ? (parsed.data.subProgramName ? `${parsed.data.programName} (${parsed.data.subProgramName})` : parsed.data.programName)
+        : (parsed.data.department || 'General Department');
+
       const { rows: studentRows } = await db.query(
-        `INSERT INTO org.students (user_id, program_id, batch_id, roll_number)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track, program_name, sub_program_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id, roll_number`,
-        [userRows[0].id, programId, batchId, rollNumber]
+        [
+          userRows[0].id,
+          programId,
+          batchId,
+          rollNumber,
+          parsed.data.department || 'Computer Science & Engineering',
+          year,
+          track,
+          parsed.data.programName || null,
+          parsed.data.subProgramName || null
+        ]
       );
 
       sendStaffWelcomeEmail({
@@ -373,7 +406,9 @@ studentBatchRouter.post(
         name,
         email,
         rollNumber: studentRows[0].roll_number,
+        department: parsed.data.department || 'Computer Science & Engineering',
         batchYear: year,
+        track,
       }, 201);
     } catch (err) {
       sendError(res, err);
@@ -389,6 +424,7 @@ const updateStudentSchema = z.object({
   department: z.string().optional(),
   programName: z.string().optional(),
   batchYear: z.number().int().optional(),
+  className: z.string().optional(),
   password: z.string().optional(),
 });
 
@@ -449,14 +485,62 @@ studentBatchRouter.patch(
       }
 
       // Update student table
+      const stuUpdates: string[] = [];
+      const stuValues: any[] = [];
+      let sIdx = 1;
+
       if (updates.rollNumber) {
+        stuUpdates.push(`roll_number = $${sIdx++}`);
+        stuValues.push(updates.rollNumber);
+      }
+      if (updates.department) {
+        stuUpdates.push(`department = $${sIdx++}`);
+        stuValues.push(updates.department);
+      }
+      if (updates.programName) {
+        stuUpdates.push(`program_name = $${sIdx++}`);
+        stuValues.push(updates.programName);
+        stuUpdates.push(`track = $${sIdx++}`);
+        stuValues.push(updates.programName);
+      }
+      if (updates.batchYear) {
+        stuUpdates.push(`batch_year = $${sIdx++}`);
+        stuValues.push(updates.batchYear);
+      }
+      if (updates.className) {
+        stuUpdates.push(`class_name = $${sIdx++}`);
+        stuValues.push(updates.className);
+      }
+
+      if (stuUpdates.length > 0) {
+        stuUpdates.push(`updated_at = now()`);
+        stuValues.push(studentId);
         await db.query(
-          `UPDATE org.students SET roll_number = $1, updated_at = now() WHERE id = $2`,
-          [updates.rollNumber, studentId]
+          `UPDATE org.students SET ${stuUpdates.join(', ')} WHERE id = $${sIdx}`,
+          stuValues
         );
       }
 
       sendSuccess(res, { message: 'Student updated successfully' });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── DELETE /api/studentBatch/:collegeId/students/:studentId ──────────────────
+studentBatchRouter.delete(
+  '/:collegeId/students/:studentId',
+  requireAdminOrOwner,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { studentId } = req.params;
+      const { rows } = await db.query(`SELECT user_id FROM org.students WHERE id = $1`, [studentId]);
+      if (rows.length > 0) {
+        await db.query(`DELETE FROM identity.users WHERE id = $1`, [rows[0].user_id]);
+      }
+      await db.query(`DELETE FROM org.students WHERE id = $1`, [studentId]);
+      sendSuccess(res, { success: true, message: 'Student removed successfully' });
     } catch (err) {
       sendError(res, err);
     }

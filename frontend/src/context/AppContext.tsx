@@ -20,9 +20,7 @@ import {
 import { 
   DEFAULT_CLEAN_STUDENT, 
   INITIAL_CRITERIA_TASKS, 
-  MOCK_INTERVIEW_QUESTIONS, 
-  MOCK_TRAINER_TENURES, 
-  MOCK_ASSIGNMENTS
+  MOCK_INTERVIEW_QUESTIONS
 } from '../data/mockData';
 import { api } from '../services/api';
 import { logger } from '../services/logger';
@@ -847,8 +845,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const timer = setInterval(checkIndependentCooldown, 5000);
     return () => clearInterval(timer);
   }, [student.isIndependent, student.department, student.track, student.coins, student.id]);
-  const [trainerTenures, setTrainerTenures] = useState<TrainerTenure[]>(MOCK_TRAINER_TENURES);
-  const [assignments, setAssignments] = useState<InterviewAssignment[]>(MOCK_ASSIGNMENTS);
+  const [trainerTenures, setTrainerTenures] = useState<TrainerTenure[]>([]);
+  const [assignments, setAssignments] = useState<InterviewAssignment[]>([]);
   const [activeAssignment, setActiveAssignment] = useState<InterviewAssignment | null>(null);
   const [latestReport, setLatestReport] = useState<DiagnosticReport | null>(null);
   const [isEvaluationPending, setIsEvaluationPending] = useState<boolean>(false);
@@ -904,15 +902,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const fetchAssignments = async () => {
       try {
         const list = await api.admin.getAssignments(currentUser?.collegeId);
-        if (list && list.length > 0) {
-          setAssignments(list);
-        }
+        setAssignments(list || []);
       } catch (e) {
         console.warn('Failed to load assignments:', e);
       }
     };
     fetchAssignments();
   }, [currentUser?.collegeId]);
+
+  useEffect(() => {
+    const fetchTenures = async () => {
+      try {
+        const list = await api.admin.getTrainerTenures(currentUser?.collegeId);
+        setTrainerTenures(list || []);
+      } catch (e) {
+        console.warn('Failed to load trainer tenures:', e);
+      }
+    };
+    fetchTenures();
+  }, [currentUser?.collegeId]);
+
+  // Load real student profile from database if authenticated as STUDENT
+  useEffect(() => {
+    if (currentUser?.role === 'STUDENT') {
+      const studentId = currentUser.studentId || currentUser.id;
+      if (studentId) {
+        api.student.getProfile(studentId)
+          .then(prof => {
+            if (prof && prof.name) {
+              setStudent(prof);
+              if (prof.recentReports && prof.recentReports.length > 0) {
+                setLatestReport(prof.recentReports[0]);
+              }
+            }
+          })
+          .catch(err => {
+            console.warn('Failed to load live student profile from database:', err);
+          });
+      }
+    }
+  }, [currentUser?.id, currentUser?.studentId, currentUser?.role]);
 
   const [disqualifiedAssignmentIds, setDisqualifiedAssignmentIds] = useState<string[]>(() => {
     try {

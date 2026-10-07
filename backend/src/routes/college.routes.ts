@@ -24,13 +24,29 @@ async function resolveCollegeId(collegeId?: string | string[]): Promise<string> 
   return created[0].id;
 }
 
-// Most routes require SUPER_ADMIN or higher
-const requireSuperAdminOrOwner = requireRole('SUPER_ADMIN', 'PLATFORM_OWNER');
+// Staff or Admin roles for reads across portals
+const requireStaffOrAdmin = requireRole(
+  'SUPER_ADMIN',
+  'PLATFORM_OWNER',
+  'PROGRAM_ADMIN',
+  'DEPARTMENT_ADMIN',
+  'COUNSELLOR',
+  'FACULTY_MENTOR',
+  'PLACEMENT_COORDINATOR'
+);
+
+// Mutating routes require administrative privileges
+const requireSuperAdminOrOwner = requireRole(
+  'SUPER_ADMIN',
+  'PLATFORM_OWNER',
+  'PROGRAM_ADMIN',
+  'DEPARTMENT_ADMIN'
+);
 
 // ── GET /api/college/:collegeId/details ──────────────────────────────────────
 collegeRouter.get(
   '/:collegeId/details',
-  requireSuperAdminOrOwner,
+  requireStaffOrAdmin,
   async (req: Request, res: Response): Promise<void> => {
     try {
       const collegeId = await resolveCollegeId(req.params.collegeId);
@@ -53,7 +69,7 @@ collegeRouter.get(
 // ── GET /api/college/:collegeId/departments ──────────────────────────────────
 collegeRouter.get(
   '/:collegeId/departments',
-  requireSuperAdminOrOwner,
+  requireStaffOrAdmin,
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { collegeId } = req.params;
@@ -301,14 +317,24 @@ collegeRouter.post(
 // ── GET /api/college/:collegeId/programs ─────────────────────────────────────
 collegeRouter.get(
   '/:collegeId/programs',
-  requireSuperAdminOrOwner,
+  requireStaffOrAdmin,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const { collegeId } = req.params;
+      const collegeId = await resolveCollegeId(req.params.collegeId);
       const { rows } = await db.query(
-        `SELECT id, institution_id AS college_id, name, code, created_at FROM org.programs
-         WHERE institution_id = $1
-         ORDER BY name`,
+        `SELECT
+          id,
+          institution_id AS college_id,
+          name,
+          code,
+          target_department AS "targetDepartment",
+          assigned_admin_name AS "assignedAdminName",
+          assigned_admin_email AS "assignedAdminEmail",
+          COALESCE(admin_permissions, '[]'::jsonb) AS "adminPermissions",
+          created_at AS "createdAt"
+        FROM org.programs
+        WHERE institution_id = $1
+        ORDER BY name`,
         [collegeId]
       );
 
@@ -321,7 +347,7 @@ collegeRouter.get(
 
 // ── POST /api/college/:collegeId/programs ────────────────────────────────────
 const createProgramSchema = z.object({
-  name: z.string().min(3).max(255),
+  name: z.string().min(2).max(255),
   code: z.string().min(2).max(20).transform(s => s.toUpperCase()),
   targetDepartment: z.string().optional(),
   assignedAdminEmail: z.string().email().optional(),
@@ -334,19 +360,36 @@ collegeRouter.post(
   requireSuperAdminOrOwner,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const { collegeId } = req.params;
+      const collegeId = await resolveCollegeId(req.params.collegeId);
       const parsed = createProgramSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new AppError(422, 'Validation failed', 'VALIDATION_ERROR');
       }
 
-      const { name, code } = parsed.data;
+      const { name, code, targetDepartment, assignedAdminEmail, assignedAdminName, adminPermissions } = parsed.data;
 
       const { rows } = await db.query(
-        `INSERT INTO org.programs (institution_id, name, code)
-         VALUES ($1, $2, $3)
-         RETURNING id, institution_id AS college_id, name, code, created_at`,
-        [collegeId, name, code]
+        `INSERT INTO org.programs (institution_id, name, code, target_department, assigned_admin_name, assigned_admin_email, admin_permissions)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING
+           id,
+           institution_id AS college_id,
+           name,
+           code,
+           target_department AS "targetDepartment",
+           assigned_admin_name AS "assignedAdminName",
+           assigned_admin_email AS "assignedAdminEmail",
+           COALESCE(admin_permissions, '[]'::jsonb) AS "adminPermissions",
+           created_at AS "createdAt"`,
+        [
+          collegeId,
+          name,
+          code,
+          targetDepartment || null,
+          assignedAdminName || null,
+          assignedAdminEmail || null,
+          JSON.stringify(adminPermissions || ['CAN_VIEW_STUDENT_PROGRESS', 'CAN_ASSIGN_INTERVIEWS', 'CAN_MANAGE_STUDENTS'])
+        ]
       );
 
       sendSuccess(res, rows[0], 201);
@@ -356,10 +399,93 @@ collegeRouter.post(
   }
 );
 
+// ── PATCH /api/college/:collegeId/programs/:progId ───────────────────────────
+collegeRouter.patch(
+  '/:collegeId/programs/:progId',
+  requireSuperAdminOrOwner,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { progId } = req.params;
+      const { name, code, targetDepartment, assignedAdminName, assignedAdminEmail, adminPermissions } = req.body;
+
+      const updates: string[] = [];
+      const values: any[] = [];
+      let paramIdx = 1;
+
+      if (name) {
+        updates.push(`name = $${paramIdx++}`);
+        values.push(name);
+      }
+      if (code) {
+        updates.push(`code = $${paramIdx++}`);
+        values.push(code.toUpperCase());
+      }
+      if (targetDepartment !== undefined) {
+        updates.push(`target_department = $${paramIdx++}`);
+        values.push(targetDepartment);
+      }
+      if (assignedAdminName !== undefined) {
+        updates.push(`assigned_admin_name = $${paramIdx++}`);
+        values.push(assignedAdminName);
+      }
+      if (assignedAdminEmail !== undefined) {
+        updates.push(`assigned_admin_email = $${paramIdx++}`);
+        values.push(assignedAdminEmail);
+      }
+      if (adminPermissions !== undefined) {
+        updates.push(`admin_permissions = $${paramIdx++}`);
+        values.push(JSON.stringify(adminPermissions));
+      }
+
+      if (updates.length > 0) {
+        values.push(progId);
+        await db.query(
+          `UPDATE org.programs SET ${updates.join(', ')} WHERE id = $${paramIdx}`,
+          values
+        );
+      }
+
+      const { rows } = await db.query(
+        `SELECT
+          id,
+          institution_id AS college_id,
+          name,
+          code,
+          target_department AS "targetDepartment",
+          assigned_admin_name AS "assignedAdminName",
+          assigned_admin_email AS "assignedAdminEmail",
+          COALESCE(admin_permissions, '[]'::jsonb) AS "adminPermissions",
+          created_at AS "createdAt"
+        FROM org.programs WHERE id = $1`,
+        [progId]
+      );
+
+      sendSuccess(res, rows[0]);
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── DELETE /api/college/:collegeId/programs/:progId ──────────────────────────
+collegeRouter.delete(
+  '/:collegeId/programs/:progId',
+  requireSuperAdminOrOwner,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { progId } = req.params;
+      await db.query(`DELETE FROM org.programs WHERE id = $1`, [progId]);
+      sendSuccess(res, { success: true });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
 // ── GET /api/college/:collegeId/staff/:departmentName ────────────────────────
 collegeRouter.get(
   '/:collegeId/staff/:departmentName',
-  requireSuperAdminOrOwner,
+  requireStaffOrAdmin,
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { collegeId, departmentName } = req.params;
@@ -614,3 +740,302 @@ collegeRouter.post(
     }
   }
 );
+
+// ── GET /api/college/:collegeId/classes ──────────────────────────────────────
+collegeRouter.get(
+  '/:collegeId/classes',
+  requireStaffOrAdmin,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const collegeId = await resolveCollegeId(req.params.collegeId);
+      const deptFilter = req.query.department as string;
+
+      let query = `
+        SELECT
+          id,
+          institution_id AS college_id,
+          department_id AS "departmentId",
+          department,
+          name,
+          code,
+          section,
+          batch_year AS "batchYear",
+          semester,
+          faculty_in_charge AS "facultyInCharge",
+          GREATEST(COALESCE(student_count, 0), (SELECT COUNT(*)::int FROM org.students s WHERE s.class_name = org.department_classes.name)) AS "enrolledStudentCount",
+          COALESCE(student_ids, '[]'::jsonb) AS "studentIds",
+          created_at AS "createdAt"
+        FROM org.department_classes
+        WHERE institution_id = $1
+      `;
+      const params: any[] = [collegeId];
+
+      if (deptFilter && deptFilter !== 'ALL') {
+        params.push(deptFilter);
+        query += ` AND (LOWER(department) = LOWER($2) OR department ILIKE '%' || $2 || '%')`;
+      }
+
+      query += ` ORDER BY batch_year DESC, name ASC`;
+
+      const { rows } = await db.query(query, params);
+      sendSuccess(res, rows);
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── POST /api/college/:collegeId/classes ─────────────────────────────────────
+const createClassSchema = z.object({
+  name: z.string().min(2).max(255),
+  department: z.string().min(2).max(255),
+  batchYear: z.number().int().min(2000).max(2100).optional(),
+  semester: z.string().optional(),
+  facultyInCharge: z.string().optional(),
+  studentCount: z.number().int().optional(),
+  studentIds: z.array(z.string()).optional(),
+  code: z.string().optional(),
+  section: z.string().optional(),
+});
+
+collegeRouter.post(
+  '/:collegeId/classes',
+  requireSuperAdminOrOwner,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const collegeId = await resolveCollegeId(req.params.collegeId);
+      const parsed = createClassSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new AppError(422, 'Validation failed', 'VALIDATION_ERROR');
+      }
+
+      const { name, department, batchYear, semester, facultyInCharge, studentCount, studentIds, code, section } = parsed.data;
+
+      const { rows } = await db.query(
+        `INSERT INTO org.department_classes
+          (institution_id, department, name, code, section, batch_year, semester, faculty_in_charge, student_count, student_ids)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING
+           id,
+           institution_id AS college_id,
+           department,
+           name,
+           code,
+           section,
+           batch_year AS "batchYear",
+           semester,
+           faculty_in_charge AS "facultyInCharge",
+           student_count AS "enrolledStudentCount",
+           student_ids AS "studentIds",
+           created_at AS "createdAt"`,
+        [
+          collegeId,
+          department,
+          name,
+          code || null,
+          section || null,
+          batchYear || 2028,
+          semester || 'Semester 5',
+          facultyInCharge || null,
+          studentCount || 0,
+          JSON.stringify(studentIds || [])
+        ]
+      );
+
+      sendSuccess(res, rows[0], 201);
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── PATCH /api/college/:collegeId/classes/:classId ───────────────────────────
+collegeRouter.patch(
+  '/:collegeId/classes/:classId',
+  requireSuperAdminOrOwner,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { classId } = req.params;
+      const { name, department, batchYear, semester, facultyInCharge, studentCount, studentIds } = req.body;
+
+      const updates: string[] = [];
+      const values: any[] = [];
+      let paramIdx = 1;
+
+      if (name !== undefined) {
+        updates.push(`name = $${paramIdx++}`);
+        values.push(name);
+      }
+      if (department !== undefined) {
+        updates.push(`department = $${paramIdx++}`);
+        values.push(department);
+      }
+      if (batchYear !== undefined) {
+        updates.push(`batch_year = $${paramIdx++}`);
+        values.push(batchYear);
+      }
+      if (semester !== undefined) {
+        updates.push(`semester = $${paramIdx++}`);
+        values.push(semester);
+      }
+      if (facultyInCharge !== undefined) {
+        updates.push(`faculty_in_charge = $${paramIdx++}`);
+        values.push(facultyInCharge);
+      }
+      if (studentCount !== undefined) {
+        updates.push(`student_count = $${paramIdx++}`);
+        values.push(studentCount);
+      }
+      if (studentIds !== undefined) {
+        updates.push(`student_ids = $${paramIdx++}`);
+        values.push(JSON.stringify(studentIds));
+      }
+
+      if (updates.length > 0) {
+        updates.push(`updated_at = now()`);
+        values.push(classId);
+        await db.query(
+          `UPDATE org.department_classes SET ${updates.join(', ')} WHERE id = $${paramIdx}`,
+          values
+        );
+      }
+
+      const { rows } = await db.query(
+        `SELECT
+          id,
+          institution_id AS college_id,
+          department,
+          name,
+          code,
+          section,
+          batch_year AS "batchYear",
+          semester,
+          faculty_in_charge AS "facultyInCharge",
+          COALESCE(student_count, 0) AS "enrolledStudentCount",
+          COALESCE(student_ids, '[]'::jsonb) AS "studentIds",
+          created_at AS "createdAt"
+        FROM org.department_classes WHERE id = $1`,
+        [classId]
+      );
+
+      sendSuccess(res, rows[0]);
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── DELETE /api/college/:collegeId/classes/:classId ──────────────────────────
+collegeRouter.delete(
+  '/:collegeId/classes/:classId',
+  requireSuperAdminOrOwner,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { classId } = req.params;
+      await db.query(`DELETE FROM org.department_classes WHERE id = $1`, [classId]);
+      sendSuccess(res, { success: true });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── POST /api/college/:collegeId/classes/bulk ────────────────────────────────
+collegeRouter.post(
+  '/:collegeId/classes/bulk',
+  requireSuperAdminOrOwner,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const collegeId = await resolveCollegeId(req.params.collegeId);
+      const { csvContent, defaultDepartment, defaultBatchYear } = req.body;
+
+      if (!csvContent || typeof csvContent !== 'string') {
+        throw new AppError(422, 'CSV content required', 'VALIDATION_ERROR');
+      }
+
+      const lines = csvContent.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+      const created: any[] = [];
+      const errors: string[] = [];
+
+      let startIdx = 0;
+      let headerCols: string[] = [];
+
+      if (lines.length > 0) {
+        const first = lines[0].toLowerCase();
+        if (first.includes('name') || first.includes('class') || first.includes('dept') || first.includes('batch')) {
+          headerCols = lines[0].split(',').map(c => c.trim().toLowerCase().replace(/["']/g, ''));
+          startIdx = 1;
+        }
+      }
+
+      for (let i = startIdx; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line) continue;
+        const cols = line.split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+        if (cols.length < 1) continue;
+
+        let name = '';
+        let department = defaultDepartment || 'Information Technology';
+        let batchYear = defaultBatchYear || 2028;
+        let semester = 'Semester 5';
+        let faculty = '';
+
+        if (headerCols.length > 0) {
+          headerCols.forEach((col, idx) => {
+            const val = cols[idx] || '';
+            if (col.includes('name') || col.includes('class')) name = val;
+            else if (col.includes('dept') || col.includes('department')) department = val;
+            else if (col.includes('batch') || col.includes('year')) {
+              const num = parseInt(val, 10);
+              if (!isNaN(num) && num >= 2000) batchYear = num;
+            }
+            else if (col.includes('sem')) semester = val;
+            else if (col.includes('fac') || col.includes('incharge') || col.includes('teacher')) faculty = val;
+          });
+        } else {
+          name = cols[0] || '';
+          if (cols.length >= 2 && cols[1]) department = cols[1];
+          if (cols.length >= 3) {
+            const num = parseInt(cols[2], 10);
+            if (!isNaN(num) && num >= 2000) batchYear = num;
+          }
+          if (cols.length >= 4 && cols[3]) semester = cols[3];
+          if (cols.length >= 5 && cols[4]) faculty = cols[4];
+        }
+
+        if (!name.trim()) {
+          errors.push(`Row ${i + 1}: Class name is required.`);
+          continue;
+        }
+
+        try {
+          const { rows } = await db.query(
+            `INSERT INTO org.department_classes
+              (institution_id, department, name, batch_year, semester, faculty_in_charge, student_count, student_ids)
+             VALUES ($1, $2, $3, $4, $5, $6, 0, '[]'::jsonb)
+             RETURNING
+               id,
+               institution_id AS college_id,
+               department,
+               name,
+               batch_year AS "batchYear",
+               semester,
+               faculty_in_charge AS "facultyInCharge",
+               student_count AS "enrolledStudentCount",
+               student_ids AS "studentIds",
+               created_at AS "createdAt"`,
+            [collegeId, department.trim(), name.trim(), batchYear, semester.trim(), faculty.trim() || null]
+          );
+          created.push(rows[0]);
+        } catch (err) {
+          errors.push(`Row ${i + 1}: ${(err as Error).message}`);
+        }
+      }
+
+      sendSuccess(res, { created: created.length, classes: created, errors }, 201);
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+

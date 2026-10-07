@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DepartmentClass } from '../../types';
+import { api } from '../../services/api';
 
 import { 
   Building2, 
@@ -93,18 +94,51 @@ export const isStaffInDepartment = (staffDept?: string, targetDept?: string): bo
 
 export const DepartmentClassesManager: React.FC<DepartmentClassesManagerProps> = ({
   departmentFilter,
+  collegeId,
   onStudentsAssigned
 }) => {
-  // Load saved classes or fallback to mock classes
-  const [classes, setClasses] = useState<DepartmentClass[]>(() => {
-    try {
-      const saved = localStorage.getItem('crp_department_classes');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return [];
-  });
+  const effectiveCollegeId = collegeId || 'col-1';
+  const [classes, setClasses] = useState<DepartmentClass[]>([]);
+  const [loadingClasses, setLoadingClasses] = useState(false);
+  const [staffList, setStaffList] = useState<AvailableStaffMember[]>([]);
 
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Load classes from database
+  const loadClasses = async () => {
+    try {
+      setLoadingClasses(true);
+      const data = await api.college.getClasses(departmentFilter, effectiveCollegeId);
+      setClasses(data);
+    } catch (err: any) {
+      console.error('Failed to load classes:', err);
+    } finally {
+      setLoadingClasses(false);
+    }
+  };
+
+  // Load department staff from database
+  const loadStaff = async () => {
+    try {
+      const data = await api.college.getDepartmentStaff(departmentFilter || 'ALL', effectiveCollegeId);
+      if (Array.isArray(data)) {
+        setStaffList(data.map(s => ({
+          key: s.id,
+          name: s.name,
+          email: s.email,
+          department: s.department,
+          role: s.designation || 'Faculty Member'
+        })));
+      }
+    } catch (err: any) {
+      console.error('Failed to load department staff:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadClasses();
+    loadStaff();
+  }, [departmentFilter, effectiveCollegeId]);
 
   // Create Class Modal
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -143,106 +177,31 @@ export const DepartmentClassesManager: React.FC<DepartmentClassesManagerProps> =
   const [parsedRows, setParsedRows] = useState<Array<{ rollNumber: string; name: string; email: string; department?: string; className?: string }>>([]);
   const [parseError, setParseError] = useState<string | null>(null);
 
-  const saveClasses = (updated: DepartmentClass[]) => {
-    setClasses(updated);
-    try {
-      localStorage.setItem('crp_department_classes', JSON.stringify(updated));
-    } catch {}
-  };
-
   // Aggregated institutional staff members available for counselor assignment
   const availableStaff = React.useMemo<AvailableStaffMember[]>(() => {
     const staffMap = new Map<string, AvailableStaffMember>();
 
-    const registerStaff = (
-      id: string,
-      name?: string,
-      email?: string,
-      department?: string,
-      role?: string
-    ) => {
-      if (!name || !name.trim()) return;
-      const cleanName = name.trim();
-      const normKey = normalizeStaffKey(cleanName);
-      if (!normKey) return;
+    staffList.forEach(s => {
+      const normKey = normalizeStaffKey(s.name);
+      if (normKey) staffMap.set(normKey, s);
+    });
 
-      const existing = staffMap.get(normKey);
-      // Prefer name with dots/initials (e.g. Dr. B. Vijayalakshmi over Dr B Vijayalakshmi)
-      const preferredName = cleanName.includes('.') ? cleanName : (existing?.name || cleanName);
-
-      staffMap.set(normKey, {
-        key: existing?.key || id,
-        name: preferredName,
-        email: email || existing?.email,
-        department: department || existing?.department,
-        role: role || existing?.role || 'Department Faculty'
-      });
-    };
-
-    // 1. LocalStorage crp_department_staff (Department Faculty Directory added by Admins)
-
-
-
-    // 3. LocalStorage crp_department_staff (Department Faculty Directory added by Dept Admins)
-    try {
-      const deptStaff = JSON.parse(localStorage.getItem('crp_department_staff') || '[]');
-      if (Array.isArray(deptStaff)) {
-        deptStaff.forEach((s: any, idx: number) => {
-          if (s && s.name) {
-            registerStaff(s.id || `deptstaff-${idx}`, s.name, s.email, s.department, s.designation);
-          }
-        });
-      }
-    } catch {}
-
-    // 4. LocalStorage admin_faculty_mentors
-    try {
-      const mentors = JSON.parse(localStorage.getItem('admin_faculty_mentors') || '[]');
-      if (Array.isArray(mentors)) {
-        mentors.forEach((m: any, idx: number) => {
-          if (m && m.name) {
-            registerStaff(m.id || `mentor-${idx}`, m.name, m.email, m.department, 'Faculty Mentor');
-          }
-        });
-      }
-    } catch {}
-
-    // 5. LocalStorage college_registered_users (mentors, counsellors, dept admins, program admins)
-    try {
-      const regUsers = JSON.parse(localStorage.getItem('college_registered_users') || '[]');
-      if (Array.isArray(regUsers)) {
-        regUsers.forEach((u: any, idx: number) => {
-          const role = (u.role || '').toUpperCase();
-          if (['FACULTY_MENTOR', 'COUNSELLOR', 'DEPARTMENT_ADMIN', 'PROGRAM_ADMIN', 'SUPER_ADMIN'].includes(role)) {
-            if (u.name) {
-              registerStaff(u.id || `reguser-${idx}`, u.name, u.email, u.department, role.replace(/_/g, ' '));
-            }
-          }
-        });
-      }
-    } catch {}
-
-    // 6. Platform departments assigned admins
-    try {
-      const depts = JSON.parse(localStorage.getItem('platform_departments') || '[]');
-      if (Array.isArray(depts)) {
-        depts.forEach((d: any, idx: number) => {
-          if (d && d.assignedAdminName) {
-            registerStaff(`deptadmin-${idx}`, d.assignedAdminName, d.assignedAdminEmail, d.name, 'Department Admin / Counselor');
-          }
-        });
-      }
-    } catch {}
-
-    // 7. Existing classes faculty
     classes.forEach((c, idx) => {
       if (c.facultyInCharge && c.facultyInCharge.trim() && c.facultyInCharge.trim().toLowerCase() !== 'assigned counselor') {
-        registerStaff(`clsfac-${idx}`, c.facultyInCharge, undefined, c.department, 'Class Counselor');
+        const normKey = normalizeStaffKey(c.facultyInCharge);
+        if (normKey && !staffMap.has(normKey)) {
+          staffMap.set(normKey, {
+            key: `clsfac-${idx}`,
+            name: c.facultyInCharge,
+            department: c.department,
+            role: 'Class Counselor'
+          });
+        }
       }
     });
 
     return Array.from(staffMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [classes]);
+  }, [staffList, classes]);
 
   // Strict department staff for Create Modal (only staff belonging to newClassDept)
   const newClassMatchingStaff = React.useMemo(() => {
@@ -331,7 +290,7 @@ export const DepartmentClassesManager: React.FC<DepartmentClassesManagerProps> =
   };
 
   // Handle Create Class
-  const handleCreateClass = (e: React.FormEvent) => {
+  const handleCreateClass = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClassName.trim()) {
       setFeedback({ type: 'error', message: 'Class or Section name is required (e.g. 2nd Year IT - Section A).' });
@@ -355,25 +314,26 @@ export const DepartmentClassesManager: React.FC<DepartmentClassesManagerProps> =
       return;
     }
 
-    const newClass: DepartmentClass = {
-      id: `cls-${Date.now()}`,
-      name: newClassName.trim(),
-      department: dept,
-      batchYear: Number(newClassBatch) || 2026,
-      semester: newClassSemester.trim() || undefined,
-      facultyInCharge: newClassFaculty.trim(),
-      enrolledStudentCount: 0,
-      studentIds: [],
-      createdAt: new Date().toISOString().split('T')[0]
-    };
+    try {
+      const created = await api.college.createClass(effectiveCollegeId, {
+        name: newClassName.trim(),
+        department: dept,
+        batchYear: Number(newClassBatch) || 2026,
+        semester: newClassSemester.trim() || undefined,
+        facultyInCharge: newClassFaculty.trim(),
+        enrolledStudentCount: 0,
+        studentIds: []
+      });
 
-    const updated = [newClass, ...classes];
-    saveClasses(updated);
-    setCreateModalOpen(false);
-    setNewClassName('');
-    setNewClassFaculty('');
-    setFeedback({ type: 'success', message: `Class "${newClass.name}" created successfully with counselor ${newClass.facultyInCharge}!` });
-    setTimeout(() => setFeedback(null), 4000);
+      setClasses(prev => [created, ...prev]);
+      setCreateModalOpen(false);
+      setNewClassName('');
+      setNewClassFaculty('');
+      setFeedback({ type: 'success', message: `Class "${created.name}" created successfully with counselor ${created.facultyInCharge}!` });
+      setTimeout(() => setFeedback(null), 4000);
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to create class in database' });
+    }
   };
 
   // Open Edit Class Modal
@@ -403,7 +363,7 @@ export const DepartmentClassesManager: React.FC<DepartmentClassesManagerProps> =
   };
 
   // Save Edited Class
-  const handleSaveEditClass = (e: React.FormEvent) => {
+  const handleSaveEditClass = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClassToEdit) return;
     if (!editClassName.trim()) {
@@ -428,25 +388,23 @@ export const DepartmentClassesManager: React.FC<DepartmentClassesManagerProps> =
       return;
     }
 
-    const updated = classes.map(c => {
-      if (c.id === selectedClassToEdit.id) {
-        return {
-          ...c,
-          name: editClassName.trim(),
-          department: dept,
-          batchYear: Number(editClassBatch) || c.batchYear,
-          semester: editClassSemester.trim() || c.semester,
-          facultyInCharge: editClassFaculty.trim()
-        };
-      }
-      return c;
-    });
+    try {
+      const updatedClass = await api.college.updateClass(effectiveCollegeId, selectedClassToEdit.id, {
+        name: editClassName.trim(),
+        department: dept,
+        batchYear: Number(editClassBatch) || selectedClassToEdit.batchYear,
+        semester: editClassSemester.trim() || selectedClassToEdit.semester,
+        facultyInCharge: editClassFaculty.trim()
+      });
 
-    saveClasses(updated);
-    setEditClassModalOpen(false);
-    setSelectedClassToEdit(null);
-    setFeedback({ type: 'success', message: `Class "${editClassName.trim()}" updated successfully!` });
-    setTimeout(() => setFeedback(null), 4000);
+      setClasses(prev => prev.map(c => c.id === selectedClassToEdit.id ? { ...c, ...updatedClass } : c));
+      setEditClassModalOpen(false);
+      setSelectedClassToEdit(null);
+      setFeedback({ type: 'success', message: `Class "${editClassName.trim()}" updated successfully in database!` });
+      setTimeout(() => setFeedback(null), 4000);
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to update class' });
+    }
   };
 
   // Delete Class with Modal or Confirmation
@@ -454,22 +412,21 @@ export const DepartmentClassesManager: React.FC<DepartmentClassesManagerProps> =
     const target = classes.find(c => c.id === id);
     if (target) {
       setDeleteConfirmClass(target);
-    } else {
-      const updated = classes.filter(c => c.id !== id);
-      saveClasses(updated);
-      setFeedback({ type: 'success', message: `Class "${name}" removed.` });
-      setTimeout(() => setFeedback(null), 3000);
     }
   };
 
-  const handleConfirmDeleteClass = () => {
+  const handleConfirmDeleteClass = async () => {
     if (!deleteConfirmClass) return;
     const target = deleteConfirmClass;
-    const updated = classes.filter(c => c.id !== target.id);
-    saveClasses(updated);
-    setDeleteConfirmClass(null);
-    setFeedback({ type: 'success', message: `Class "${target.name}" removed successfully.` });
-    setTimeout(() => setFeedback(null), 3000);
+    try {
+      await api.college.deleteClass(effectiveCollegeId, target.id);
+      setClasses(prev => prev.filter(c => c.id !== target.id));
+      setDeleteConfirmClass(null);
+      setFeedback({ type: 'success', message: `Class "${target.name}" removed successfully.` });
+      setTimeout(() => setFeedback(null), 3000);
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to delete class' });
+    }
   };
 
   // Download sample CSV template for bulk creating classes and counselors
@@ -506,151 +463,36 @@ export const DepartmentClassesManager: React.FC<DepartmentClassesManagerProps> =
     reader.readAsText(file);
   };
 
-  const handleConfirmBulkClassCreation = () => {
+  const handleConfirmBulkClassCreation = async () => {
     if (!bulkClassCsvText.trim()) {
       setBulkClassError('Please provide CSV content or upload a file.');
       return;
     }
 
-    const lines = bulkClassCsvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    if (lines.length < 2) {
-      setBulkClassError('CSV must include a header row and at least 1 class row.');
-      return;
-    }
-
-    let startIdx = 0;
-    let headerCols: string[] = [];
-    const firstLower = lines[0].toLowerCase();
-    if (firstLower.includes('class') || firstLower.includes('section') || firstLower.includes('batch') || firstLower.includes('counselor') || firstLower.includes('faculty')) {
-      headerCols = lines[0].split(',').map(c => c.trim().toLowerCase().replace(/["']/g, ''));
-      startIdx = 1;
-    }
-
-    const createdClasses: DepartmentClass[] = [];
-    const errors: string[] = [];
-
-    let mentors: any[] = [];
     try {
-      mentors = JSON.parse(localStorage.getItem('admin_faculty_mentors') || '[]');
-    } catch {}
+      const res = await api.college.bulkCreateClasses(
+        effectiveCollegeId,
+        bulkClassCsvText,
+        departmentFilter || 'Information Technology',
+        2028
+      );
 
-    let registeredUsers: any[] = [];
-    try {
-      registeredUsers = JSON.parse(localStorage.getItem('college_registered_users') || '[]');
-    } catch {}
+      await loadClasses();
+      await loadStaff();
 
-    for (let i = startIdx; i < lines.length; i++) {
-      const line = lines[i];
-      if (!line) continue;
-      const cols = line.split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
-      if (cols.length < 1) continue;
+      setBulkClassModalOpen(false);
+      setBulkClassCsvText('');
+      setBulkClassFileName('');
+      setBulkClassError(null);
 
-      let cName = '';
-      let bYear = 2028;
-      let cFaculty = '';
-      let cEmail = '';
-      let cSem = 'Semester 5';
-
-      if (headerCols.length > 0) {
-        headerCols.forEach((colName, idx) => {
-          const val = cols[idx] || '';
-          if (colName.includes('class') || colName.includes('section')) cName = val;
-          else if (colName.includes('batch')) {
-            const num = parseInt(val, 10);
-            if (!isNaN(num) && num >= 2000) bYear = num;
-          }
-          else if ((colName.includes('counselor') || colName.includes('faculty')) && !colName.includes('email') && !colName.includes('mail')) cFaculty = val;
-          else if (colName.includes('email') || colName.includes('mail')) cEmail = val;
-          else if (colName.includes('sem')) cSem = val;
-        });
-      }
-
-      // Positional fallbacks
-      if (!cName) cName = cols[0] || '';
-      if (cols.length >= 2 && !headerCols.length) {
-        const num = parseInt(cols[1], 10);
-        if (!isNaN(num) && num >= 2000) bYear = num;
-      }
-      if (cols.length >= 3 && !headerCols.length) cFaculty = cols[2];
-      if (cols.length >= 4 && !headerCols.length) {
-        if (cols[3].includes('@')) cEmail = cols[3];
-        else cSem = cols[3];
-      }
-      if (cols.length >= 5 && !headerCols.length) {
-        if (cols[4].includes('@')) cEmail = cols[4];
-        else cSem = cols[4];
-      }
-
-      if (!cName.trim()) {
-        errors.push(`Row ${i + 1}: Class Name is required.`);
-        continue;
-      }
-
-      const newCls: DepartmentClass = {
-        id: `cls-${Date.now()}-${i}`,
-        name: cName.trim(),
-        department: departmentFilter || 'Information Technology',
-        batchYear: bYear,
-        semester: cSem.trim() || undefined,
-        facultyInCharge: cFaculty.trim() || 'Assigned Counselor',
-        enrolledStudentCount: 0,
-        studentIds: [],
-        createdAt: new Date().toISOString().split('T')[0]
-      };
-      createdClasses.push(newCls);
-
-      // Register counselor if email provided
-      if (cEmail && cEmail.includes('@')) {
-        const counselorName = cFaculty.trim() || 'Faculty Counselor';
-        const mIdx = mentors.findIndex(m => m.email?.toLowerCase() === cEmail.toLowerCase());
-        if (mIdx === -1) {
-          mentors.push({
-            id: `fm_${Date.now()}_${i}`,
-            name: counselorName,
-            email: cEmail.toLowerCase(),
-            department: departmentFilter || 'Information Technology',
-            assignedMenteesCount: 0
-          });
-        }
-
-        const uIdx = registeredUsers.findIndex(u => u.email?.toLowerCase() === cEmail.toLowerCase());
-        if (uIdx === -1) {
-          registeredUsers.push({
-            id: `usr_fm_${Date.now()}_${i}`,
-            name: counselorName,
-            email: cEmail.toLowerCase(),
-            password: 'welcome@2026',
-            role: 'PROGRAM_ADMIN',
-            department: departmentFilter || 'Information Technology',
-            permissions: ['CAN_VIEW_STUDENT_PROGRESS', 'CAN_ASSIGN_INTERVIEWS', 'CAN_MANAGE_STUDENTS']
-          });
-        }
-      }
+      setFeedback({
+        type: 'success',
+        message: `Successfully created ${res.created} classes and counselors in database!`
+      });
+      setTimeout(() => setFeedback(null), 5000);
+    } catch (err: any) {
+      setBulkClassError(err.message || 'Failed to bulk create classes');
     }
-
-    if (createdClasses.length === 0) {
-      setBulkClassError('No valid class rows found in CSV.');
-      return;
-    }
-
-    try {
-      localStorage.setItem('admin_faculty_mentors', JSON.stringify(mentors));
-      localStorage.setItem('college_registered_users', JSON.stringify(registeredUsers));
-    } catch {}
-
-    const updated = [...createdClasses, ...classes];
-    saveClasses(updated);
-
-    setBulkClassModalOpen(false);
-    setBulkClassCsvText('');
-    setBulkClassFileName('');
-    setBulkClassError(null);
-
-    setFeedback({
-      type: 'success',
-      message: `Successfully created ${createdClasses.length} classes and assigned counselors in bulk!`
-    });
-    setTimeout(() => setFeedback(null), 5000);
   };
 
   // Generate and download sample CSV template
@@ -728,7 +570,7 @@ export const DepartmentClassesManager: React.FC<DepartmentClassesManagerProps> =
   };
 
   // Confirm CSV bulk student assignment across classes (e.g. IT A and IT B)
-  const handleConfirmCsvAssignment = () => {
+  const handleConfirmCsvAssignment = async () => {
     if (parsedRows.length === 0) {
       setParseError('No student rows loaded from CSV.');
       return;
@@ -740,71 +582,41 @@ export const DepartmentClassesManager: React.FC<DepartmentClassesManagerProps> =
       return;
     }
 
-    let updated = [...classes];
-    const classBreakdown: string[] = [];
-
-    if (hasRowClassNames) {
-      const groupCounts: Record<string, number> = {};
-      parsedRows.forEach(r => {
-        const cName = r.className?.trim() || classes.find(c => c.id === targetClassId)?.name || 'Default Section';
-        groupCounts[cName] = (groupCounts[cName] || 0) + 1;
-      });
-
-      Object.entries(groupCounts).forEach(([clsName, count]) => {
-        const existingClass = updated.find(c => 
-          c.name.toLowerCase() === clsName.toLowerCase() ||
-          c.name.toLowerCase().includes(clsName.toLowerCase()) ||
-          clsName.toLowerCase().includes(c.name.toLowerCase())
-        );
-        if (existingClass) {
-          existingClass.enrolledStudentCount += count;
-          classBreakdown.push(`${count} to "${existingClass.name}"`);
-        } else {
-          const newCls: DepartmentClass = {
-            id: `cls-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            name: clsName,
-            department: departmentFilter || 'Information Technology',
-            batchYear: 2026,
-            semester: 'Semester 5',
-            facultyInCharge: 'Assigned Counselor',
-            enrolledStudentCount: count,
-            studentIds: [],
-            createdAt: new Date().toISOString().split('T')[0]
-          };
-          updated.push(newCls);
-          classBreakdown.push(`${count} to "${newCls.name}"`);
-        }
-      });
-    } else {
+    try {
       const targetClass = classes.find(c => c.id === targetClassId);
-      if (!targetClass) return;
+      const csvHeader = 'Roll Number,Student Name,Email,Department,Class Name\n';
+      const csvBody = parsedRows.map(r => {
+        const cName = r.className?.trim() || targetClass?.name || 'Default Section';
+        const dept = r.department || departmentFilter || 'Information Technology';
+        return `"${r.rollNumber}","${r.name}","${r.email}","${dept}","${cName}"`;
+      }).join('\n');
 
-      const newStudentCount = targetClass.enrolledStudentCount + parsedRows.length;
-      updated = classes.map(c => 
-        c.id === targetClassId 
-          ? { ...c, enrolledStudentCount: newStudentCount }
-          : c
+      const res = await api.studentBatch.bulkImportAndAssignStudents(
+        effectiveCollegeId,
+        csvHeader + csvBody,
+        2028
       );
-      classBreakdown.push(`${parsedRows.length} to "${targetClass.name}"`);
+
+      await loadClasses();
+
+      if (onStudentsAssigned) {
+        onStudentsAssigned(res.count, targetClass?.name || 'Classes');
+      }
+
+      setFeedback({
+        type: 'success',
+        message: `Successfully enrolled and allocated ${res.count} students across classes in database!`
+      });
+      setTimeout(() => setFeedback(null), 5000);
+
+      // Reset CSV modal
+      setCsvModalOpen(false);
+      setParsedRows([]);
+      setCsvFileName('');
+      setTargetClassId('');
+    } catch (err: any) {
+      setParseError(err.message || 'Failed to assign students to classes');
     }
-
-    saveClasses(updated);
-
-    if (onStudentsAssigned) {
-      onStudentsAssigned(parsedRows.length, classBreakdown.join(', '));
-    }
-
-    setFeedback({
-      type: 'success',
-      message: `Successfully allocated ${parsedRows.length} students across classes: ${classBreakdown.join(', ')}!`
-    });
-    setTimeout(() => setFeedback(null), 5000);
-
-    // Reset CSV modal
-    setCsvModalOpen(false);
-    setParsedRows([]);
-    setCsvFileName('');
-    setTargetClassId('');
   };
 
   const openCsvModalForClass = (clsId: string) => {

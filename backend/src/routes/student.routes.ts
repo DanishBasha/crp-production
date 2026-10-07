@@ -21,62 +21,98 @@ const upload = multer({
   limits: { fileSize: env.UPLOAD_MAX_FILE_SIZE_MB * 1024 * 1024 },
 });
 
-// ── GET /api/students/:studentId ──────────────────────────────────────────────
-// ── GET /api/students/me ─────────────────────────────────────────────────────
+function paramStr(p: string | string[] | undefined): string {
+  return Array.isArray(p) ? (p[0] || '') : (p || '');
+}
 
+async function fetchStudentProfile(identifier: string) {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identifier);
+  let query = `
+    SELECT
+      s.id,
+      s.user_id AS "userId",
+      u.name,
+      u.email,
+      s.roll_number AS "rollNumber",
+      u.institution_id AS "collegeId",
+      COALESCE(s.department, 'General Department') AS department,
+      COALESCE(s.batch_year, 2026) AS "batchYear",
+      COALESCE(s.class_name, '') AS "className",
+      COALESCE(s.track, 'General Track') AS track,
+      s.program_id AS "programId",
+      s.program_name AS "programName",
+      s.sub_program_name AS "subProgramName",
+      COALESCE(s.mentor_name, 'Faculty Mentor') AS "mentorName",
+      COALESCE(s.mentor_email, 'mentor@college.edu') AS "mentorEmail",
+      COALESCE(s.coding_handles, '{}'::jsonb) AS "codingHandles",
+      s.resume_data AS resume,
+      COALESCE(s.criteria_tasks, '[]'::jsonb) AS "criteriaTasks",
+      COALESCE(s.improvement_checklist, '[]'::jsonb) AS "improvementChecklist",
+      COALESCE(s.recent_reports, '[]'::jsonb) AS "recentReports",
+      COALESCE(s.overall_readiness, 75) AS "overallReadiness",
+      COALESCE(s.overall_readiness, 75) AS score,
+      COALESCE(s.coins, 5) AS coins,
+      s.created_at AS "createdAt"
+    FROM org.students s
+    JOIN identity.users u ON u.id = s.user_id
+  `;
+  if (isUuid) {
+    query += ` WHERE s.id = $1 OR s.user_id = $1`;
+  } else {
+    query += ` WHERE s.roll_number = $1 OR u.email = $1`;
+  }
+  const { rows } = await db.query(query, [identifier]);
+  if (rows.length > 0) return rows[0];
+
+  // Auto-create student record if user exists
+  if (isUuid) {
+    const { rows: uRows } = await db.query(`SELECT id, name, email FROM identity.users WHERE id = $1`, [identifier]);
+    if (uRows.length > 0) {
+      const roll = `STU${Date.now().toString(36).toUpperCase().slice(-6)}`;
+      const { rows: newStu } = await db.query(
+        `INSERT INTO org.students (user_id, roll_number, department, batch_year, track)
+         VALUES ($1, $2, 'General Department', 2026, 'General Track')
+         RETURNING id`,
+        [uRows[0].id, roll]
+      );
+      if (newStu.length > 0) {
+        return fetchStudentProfile(newStu[0].id);
+      }
+    }
+  }
+  return null;
+}
+
+// ── GET /api/students/me ─────────────────────────────────────────────────────
 studentRouter.get(
   '/me',
   authenticate,
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const userId = req.user!.id;
-
-      const { rows } = await db.query(
-        `SELECT s.id, s.roll_number, s.batch_id, s.subdivision_id,
-                s.coding_handles, s.resume_url, s.resume_verified,
-                s.created_at, s.updated_at,
-                u.id AS user_id, u.name, u.email, u.role, u.status
-         FROM org.students s
-         JOIN identity.users u ON u.id = s.user_id
-         WHERE s.user_id = $1`,
-        [userId]
-      );
-
-      if (rows.length === 0) {
-        throw new AppError(404, 'Student not found', 'NOT_FOUND');
+      const student = await fetchStudentProfile(userId);
+      if (!student) {
+        throw new AppError(404, 'Student profile not found', 'NOT_FOUND');
       }
-
-      sendSuccess(res, { student: rows[0] });
+      sendSuccess(res, { student, profile: student });
     } catch (err) {
       sendError(res, err);
     }
   }
 );
 
+// ── GET /api/students/:studentId ─────────────────────────────────────────────
 studentRouter.get(
-  '/:studentId',
-  requireStudentSelfOrStaff,
+  ['/:studentId', '/:studentId/profile'],
+  authenticate,
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-      const { studentId } = req.params;
-      const { rows } = await db.query(
-        `SELECT s.id, s.roll_number, s.batch_id, s.subdivision_id, s.coding_handles,
-                s.resume_url, s.resume_verified, s.created_at, s.updated_at,
-                u.id as user_id, u.name, u.email, u.role, u.status
-         FROM org.students s
-         JOIN identity.users u ON u.id = s.user_id
-         WHERE s.id = $1`,
-        [studentId]
-      );
-      if (rows.length === 0) throw new AppError(404, 'Student not found', 'NOT_FOUND');
-
-      const student = rows[0];
-      // STUDENT may only access their own record
-      if (req.user!.role === 'STUDENT' && student.user_id !== req.user!.id) {
-        throw new AppError(403, 'Access denied', 'FORBIDDEN');
+      const studentId = paramStr(req.params.studentId);
+      const student = await fetchStudentProfile(studentId);
+      if (!student) {
+        throw new AppError(404, 'Student not found', 'NOT_FOUND');
       }
-
-      sendSuccess(res, { student });
+      sendSuccess(res, { student, profile: student });
     } catch (err) {
       sendError(res, err);
     }
@@ -217,3 +253,261 @@ studentRouter.patch(
     }
   }
 );
+
+// ── PUT/PATCH /api/students/:studentId/profile ───────────────────────────────
+studentRouter.all(
+  ['/:studentId/profile', '/:studentId/update'],
+  authenticate,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      if (req.method !== 'PUT' && req.method !== 'PATCH' && req.method !== 'POST') {
+        throw new AppError(405, 'Method not allowed', 'METHOD_NOT_ALLOWED');
+      }
+      const studentId = paramStr(req.params.studentId);
+      const b = req.body;
+
+      const student = await fetchStudentProfile(studentId);
+      if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
+
+      const stuUpdates: string[] = [];
+      const stuValues: any[] = [];
+      let pIdx = 1;
+
+      if (b.department !== undefined) {
+        stuUpdates.push(`department = $${pIdx++}`);
+        stuValues.push(b.department);
+      }
+      if (b.batchYear !== undefined) {
+        stuUpdates.push(`batch_year = $${pIdx++}`);
+        stuValues.push(b.batchYear);
+      }
+      if (b.className !== undefined) {
+        stuUpdates.push(`class_name = $${pIdx++}`);
+        stuValues.push(b.className);
+      }
+      if (b.track !== undefined) {
+        stuUpdates.push(`track = $${pIdx++}`);
+        stuValues.push(b.track);
+      }
+      if (b.programName !== undefined) {
+        stuUpdates.push(`program_name = $${pIdx++}`);
+        stuValues.push(b.programName);
+      }
+      if (b.subProgramName !== undefined) {
+        stuUpdates.push(`sub_program_name = $${pIdx++}`);
+        stuValues.push(b.subProgramName);
+      }
+      if (b.mentorName !== undefined) {
+        stuUpdates.push(`mentor_name = $${pIdx++}`);
+        stuValues.push(b.mentorName);
+      }
+      if (b.mentorEmail !== undefined) {
+        stuUpdates.push(`mentor_email = $${pIdx++}`);
+        stuValues.push(b.mentorEmail);
+      }
+      if (b.codingHandles !== undefined) {
+        stuUpdates.push(`coding_handles = $${pIdx++}`);
+        stuValues.push(JSON.stringify(b.codingHandles));
+      }
+      if (b.resume !== undefined) {
+        stuUpdates.push(`resume_data = $${pIdx++}`);
+        stuValues.push(JSON.stringify(b.resume));
+      }
+      if (b.criteriaTasks !== undefined) {
+        stuUpdates.push(`criteria_tasks = $${pIdx++}`);
+        stuValues.push(JSON.stringify(b.criteriaTasks));
+      }
+      if (b.improvementChecklist !== undefined) {
+        stuUpdates.push(`improvement_checklist = $${pIdx++}`);
+        stuValues.push(JSON.stringify(b.improvementChecklist));
+      }
+      if (b.recentReports !== undefined) {
+        stuUpdates.push(`recent_reports = $${pIdx++}`);
+        stuValues.push(JSON.stringify(b.recentReports));
+      }
+      if (b.overallReadiness !== undefined || b.score !== undefined) {
+        stuUpdates.push(`overall_readiness = $${pIdx++}`);
+        stuValues.push(b.overallReadiness ?? b.score);
+      }
+      if (b.coins !== undefined) {
+        stuUpdates.push(`coins = $${pIdx++}`);
+        stuValues.push(b.coins);
+      }
+      if (b.rollNumber !== undefined) {
+        stuUpdates.push(`roll_number = $${pIdx++}`);
+        stuValues.push(b.rollNumber.toUpperCase());
+      }
+
+      if (stuUpdates.length > 0) {
+        stuUpdates.push(`updated_at = now()`);
+        stuValues.push(student.id);
+        await db.query(
+          `UPDATE org.students SET ${stuUpdates.join(', ')} WHERE id = $${pIdx}`,
+          stuValues
+        );
+      }
+
+      // Update user's name if given
+      if (b.name) {
+        await db.query(`UPDATE identity.users SET name = $1, updated_at = now() WHERE id = $2`, [b.name.trim(), student.userId]);
+      }
+
+      const updated = await fetchStudentProfile(student.id);
+      sendSuccess(res, { student: updated, profile: updated });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── POST /api/students/:studentId/coding-handles ──────────────────────────────
+studentRouter.post(
+  '/:studentId/coding-handles',
+  authenticate,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const studentId = paramStr(req.params.studentId);
+      const handles = req.body;
+      const student = await fetchStudentProfile(studentId);
+      if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
+
+      const merged = {
+        ...(student.codingHandles || {}),
+        ...handles
+      };
+
+      await db.query(
+        `UPDATE org.students SET coding_handles = $1, updated_at = now() WHERE id = $2`,
+        [JSON.stringify(merged), student.id]
+      );
+
+      sendSuccess(res, { codingHandles: merged });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── POST /api/students/:studentId/resume-data ────────────────────────────────
+studentRouter.post(
+  '/:studentId/resume-data',
+  authenticate,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const studentId = paramStr(req.params.studentId);
+      const parsedResume = req.body;
+      const student = await fetchStudentProfile(studentId);
+      if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
+
+      await db.query(
+        `UPDATE org.students SET resume_data = $1, updated_at = now() WHERE id = $2`,
+        [JSON.stringify(parsedResume), student.id]
+      );
+
+      sendSuccess(res, { resume: parsedResume });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── POST /api/students/:studentId/tasks/toggle ───────────────────────────────
+studentRouter.post(
+  '/:studentId/tasks/toggle',
+  authenticate,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const studentId = paramStr(req.params.studentId);
+      const { taskId } = req.body;
+      const student = await fetchStudentProfile(studentId);
+      if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
+
+      let tasks = Array.isArray(student.criteriaTasks) ? [...student.criteriaTasks] : [];
+      let isCompleted = false;
+
+      const tIdx = tasks.findIndex((t: any) => t.id === taskId);
+      if (tIdx !== -1) {
+        tasks[tIdx].isCompleted = !tasks[tIdx].isCompleted;
+        isCompleted = tasks[tIdx].isCompleted;
+      } else {
+        tasks.push({
+          id: taskId,
+          title: 'Custom Task',
+          description: '',
+          targetTrack: 'General',
+          isCompleted: true,
+          verifiedByMentor: false
+        });
+        isCompleted = true;
+      }
+
+      await db.query(
+        `UPDATE org.students SET criteria_tasks = $1, updated_at = now() WHERE id = $2`,
+        [JSON.stringify(tasks), student.id]
+      );
+
+      sendSuccess(res, { isCompleted, tasks });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── POST /api/students/:studentId/tasks/verify ───────────────────────────────
+studentRouter.post(
+  '/:studentId/tasks/verify',
+  authenticate,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const studentId = paramStr(req.params.studentId);
+      const { taskId } = req.body;
+      const student = await fetchStudentProfile(studentId);
+      if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
+
+      let tasks = Array.isArray(student.criteriaTasks) ? [...student.criteriaTasks] : [];
+      const tIdx = tasks.findIndex((t: any) => t.id === taskId);
+      if (tIdx !== -1) {
+        tasks[tIdx].verifiedByMentor = true;
+        tasks[tIdx].verifiedAt = new Date().toISOString().split('T')[0];
+      }
+
+      await db.query(
+        `UPDATE org.students SET criteria_tasks = $1, updated_at = now() WHERE id = $2`,
+        [JSON.stringify(tasks), student.id]
+      );
+
+      sendSuccess(res, { success: true, tasks });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── POST /api/students/:studentId/reports ────────────────────────────────────
+studentRouter.post(
+  '/:studentId/reports',
+  authenticate,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const studentId = paramStr(req.params.studentId);
+      const report = req.body;
+      const student = await fetchStudentProfile(studentId);
+      if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
+
+      let reports = Array.isArray(student.recentReports) ? [report, ...student.recentReports] : [report];
+      const newScore = report.overallScore || student.score || 75;
+
+      await db.query(
+        `UPDATE org.students
+         SET recent_reports = $1, overall_readiness = $2, updated_at = now()
+         WHERE id = $3`,
+        [JSON.stringify(reports), newScore, student.id]
+      );
+
+      sendSuccess(res, { report, score: newScore });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
