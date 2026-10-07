@@ -41,7 +41,7 @@ ownerRouter.get('/colleges', async (_req: Request, res: Response): Promise<void>
         LIMIT 1
       ) sa ON true
       LEFT JOIN LATERAL (
-        SELECT inv_p.email, inv_p.name, inv_p.status
+        SELECT inv_p.id, inv_p.email, inv_p.name, inv_p.status
         FROM identity.pending_invites inv_p
         WHERE inv_p.institution_id = i.id
           AND inv_p.role = 'SUPER_ADMIN'
