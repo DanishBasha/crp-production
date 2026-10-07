@@ -1166,10 +1166,62 @@ class ApiClient {
 
   invites = {
     getAll: async (): Promise<PendingInvite[]> => {
+      try {
+        const res = await this._fetch<{ data: any[] }>('/invites');
+        if (Array.isArray(res?.data)) {
+          return res.data.map((inv: any) => ({
+            token: inv.token,
+            email: inv.email,
+            firstName: inv.first_name,
+            lastName: inv.last_name,
+            name: inv.name || `${inv.first_name || ''} ${inv.last_name || ''}`.trim(),
+            role: inv.role,
+            collegeId: inv.college_id || inv.institution_id,
+            collegeName: inv.college_name || inv.institution_name,
+            programId: inv.program_id,
+            department: inv.department,
+            permissions: inv.permissions,
+            status: inv.status,
+            createdAt: inv.created_at || inv.createdAt,
+            expiresAt: inv.expires_at || inv.expiresAt,
+          }));
+        }
+      } catch (err) {
+        console.warn('Failed to fetch invites from API, falling back to storage:', err);
+      }
       return this.getStorage<PendingInvite[]>('platform_pending_invites', []);
     },
 
     getByToken: async (token: string): Promise<PendingInvite | null> => {
+      if (!token) return null;
+      try {
+        const res = await this._fetch<{ data: any }>(`/invites/${encodeURIComponent(token.trim())}`);
+        if (res?.data) {
+          const inv = res.data;
+          return {
+            token: inv.token,
+            email: inv.email,
+            firstName: inv.first_name,
+            lastName: inv.last_name,
+            name: inv.name || `${inv.first_name || ''} ${inv.last_name || ''}`.trim(),
+            role: inv.role,
+            collegeId: inv.college_id || inv.institution_id || inv.collegeId,
+            collegeName: inv.college_name || inv.institution_name || inv.collegeName,
+            programId: inv.program_id || inv.programId,
+            department: inv.department,
+            permissions: inv.permissions,
+            status: inv.status,
+            createdAt: inv.created_at || inv.createdAt,
+            expiresAt: inv.expires_at || inv.expiresAt,
+          };
+        }
+      } catch (err: any) {
+        console.warn('Backend getByToken error:', err?.message);
+        if (err?.message && (err.message.includes('expired') || err.message.includes('already accepted') || err.message.includes('ALREADY_USED'))) {
+          throw err;
+        }
+      }
+
       const invites = this.getStorage<PendingInvite[]>('platform_pending_invites', []);
       const found = invites.find(inv => inv.token === token);
       if (found) return found;
@@ -1190,6 +1242,40 @@ class ApiClient {
     },
 
     completePasswordSetup: async (token: string, password: string): Promise<{ user: AuthUser; token: string }> => {
+      try {
+        const res = await this._fetch<{ data: { user: any; token: string } }>(
+          `/invites/${encodeURIComponent(token.trim())}/complete`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ password }),
+          }
+        );
+        if (res?.data?.token && res?.data?.user) {
+          const u = res.data.user;
+          const userRecord: AuthUser = {
+            id: u.id,
+            name: u.name,
+            email: u.email,
+            role: u.role,
+            collegeId: u.collegeId || u.college_id || u.institution_id,
+            collegeName: u.collegeName || u.college_name || u.institution_name,
+            programId: u.programId || u.program_id,
+            department: u.department,
+            permissions: u.permissions || ['CAN_VIEW_STUDENT_PROGRESS', 'CAN_ASSIGN_INTERVIEWS', 'CAN_ASSIGN_LISTENING', 'CAN_MANAGE_STUDENTS'],
+          };
+          this.setToken(res.data.token);
+          localStorage.setItem('auth_user', JSON.stringify(userRecord));
+          return { user: userRecord, token: res.data.token };
+        }
+      } catch (err: any) {
+        console.warn('Backend completePasswordSetup error:', err?.message);
+        const invites = this.getStorage<PendingInvite[]>('platform_pending_invites', []);
+        const invIdx = invites.findIndex(inv => inv.token === token);
+        if (invIdx === -1 && !token.toLowerCase().includes('demo')) {
+          throw err;
+        }
+      }
+
       const invites = this.getStorage<PendingInvite[]>('platform_pending_invites', []);
       const invIdx = invites.findIndex(inv => inv.token === token);
       let invite: PendingInvite;

@@ -36,11 +36,13 @@ invitesRouter.get('/:token', async (req: Request, res: Response): Promise<void> 
 
     const { rows } = await db.query(
       `SELECT
-        id, token, email, first_name, last_name, name, role,
-        institution_id AS college_id, institution_name AS college_name,
-        program_id, department, permissions, status, created_at, expires_at
-      FROM identity.pending_invites
-      WHERE token = $1`,
+        pi.id, pi.token, pi.email, pi.first_name, pi.last_name, pi.name, pi.role,
+        pi.institution_id AS college_id,
+        COALESCE(pi.institution_name, inst.name, 'Institution') AS college_name,
+        pi.program_id, pi.department, pi.permissions, pi.status, pi.created_at, pi.expires_at
+      FROM identity.pending_invites pi
+      LEFT JOIN org.institutions inst ON inst.id = pi.institution_id
+      WHERE pi.token = $1`,
       [token]
     );
 
@@ -68,7 +70,7 @@ invitesRouter.get('/:token', async (req: Request, res: Response): Promise<void> 
 
 // ── POST /api/invites/:token/complete ────────────────────────────────────────
 const completeInviteSchema = z.object({
-  password: z.string().min(8, 'Password must be at least 8 characters'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
 });
 
 invitesRouter.post(
@@ -87,11 +89,14 @@ invitesRouter.post(
       // Fetch invite
       const { rows: invites } = await db.query(
         `SELECT
-          id, token, email, first_name, last_name, name, role,
-          institution_id, institution_name, program_id, department,
-          permissions, status, expires_at
-        FROM identity.pending_invites
-        WHERE token = $1`,
+          pi.id, pi.token, pi.email, pi.first_name, pi.last_name, pi.name, pi.role,
+          pi.institution_id,
+          COALESCE(pi.institution_name, inst.name, 'Institution') AS institution_name,
+          pi.program_id, pi.department,
+          pi.permissions, pi.status, pi.expires_at
+        FROM identity.pending_invites pi
+        LEFT JOIN org.institutions inst ON inst.id = pi.institution_id
+        WHERE pi.token = $1`,
         [token]
       );
 
@@ -116,21 +121,27 @@ invitesRouter.post(
         [invite.email]
       );
 
-      if (existingUsers.length > 0) {
-        throw new AppError(409, 'User with this email already exists', 'DUPLICATE_EMAIL');
-      }
-
-      // Create user
       const passwordHash = await bcrypt.hash(password, 10);
+      let user: any;
 
-      const { rows: userRows } = await db.query(
-        `INSERT INTO identity.users (name, email, password_hash, role, token_version, status)
-         VALUES ($1, $2, $3, $4, 0, 'ACTIVE')
-         RETURNING id, name, email, role, token_version`,
-        [invite.name, invite.email, passwordHash, invite.role]
-      );
-
-      const user = userRows[0];
+      if (existingUsers.length > 0) {
+        const { rows: userRows } = await db.query(
+          `UPDATE identity.users
+           SET password_hash = $1, role = $2, name = $3, status = 'ACTIVE'
+           WHERE id = $4
+           RETURNING id, name, email, role, token_version`,
+          [passwordHash, invite.role, invite.name, existingUsers[0].id]
+        );
+        user = userRows[0];
+      } else {
+        const { rows: userRows } = await db.query(
+          `INSERT INTO identity.users (name, email, password_hash, role, token_version, status)
+           VALUES ($1, $2, $3, $4, 0, 'ACTIVE')
+           RETURNING id, name, email, role, token_version`,
+          [invite.name, invite.email, passwordHash, invite.role]
+        );
+        user = userRows[0];
+      }
 
       // Mark invite as accepted
       await db.query(

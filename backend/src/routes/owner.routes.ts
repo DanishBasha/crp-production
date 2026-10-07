@@ -22,28 +22,33 @@ ownerRouter.get('/colleges', async (_req: Request, res: Response): Promise<void>
         i.code,
         i.type AS campus_city,
         i.created_at,
-        sa.email AS super_admin_email,
-        sa.name AS super_admin_name,
+        COALESCE(sa.email, inv.email) AS super_admin_email,
+        COALESCE(sa.name, inv.name) AS super_admin_name,
         CASE
           WHEN sa.id IS NOT NULL AND sa.status = 'ACTIVE' THEN 'ACTIVE'
           WHEN inv.id IS NOT NULL AND inv.status = 'PENDING' THEN 'PENDING_INVITE'
           ELSE 'NO_ADMIN'
         END AS super_admin_status
       FROM org.institutions i
-      LEFT JOIN identity.users sa ON sa.role = 'SUPER_ADMIN'
-        AND EXISTS (
-          SELECT 1 FROM org.programs p WHERE p.institution_id = i.id
-          AND EXISTS (
-            SELECT 1 FROM org.batches b WHERE b.program_id = p.id
-            AND EXISTS (
-              SELECT 1 FROM org.students s WHERE s.batch_id = b.id
-              LIMIT 1
-            )
-          )
-        )
-      LEFT JOIN identity.pending_invites inv ON inv.institution_id = i.id
-        AND inv.role = 'SUPER_ADMIN'
-        AND inv.status = 'PENDING'
+      LEFT JOIN LATERAL (
+        SELECT inv_a.email, u.name, u.id, u.status
+        FROM identity.pending_invites inv_a
+        JOIN identity.users u ON u.email = inv_a.email
+        WHERE inv_a.institution_id = i.id
+          AND inv_a.role = 'SUPER_ADMIN'
+          AND inv_a.status = 'ACCEPTED'
+        ORDER BY inv_a.created_at DESC
+        LIMIT 1
+      ) sa ON true
+      LEFT JOIN LATERAL (
+        SELECT inv_p.email, inv_p.name, inv_p.status
+        FROM identity.pending_invites inv_p
+        WHERE inv_p.institution_id = i.id
+          AND inv_p.role = 'SUPER_ADMIN'
+          AND inv_p.status = 'PENDING'
+        ORDER BY inv_p.created_at DESC
+        LIMIT 1
+      ) inv ON true
       ORDER BY i.created_at DESC
     `);
     sendSuccess(res, rows);
@@ -170,7 +175,14 @@ ownerRouter.post(
         ]
       );
 
-      const inviteUrl = `${process.env.APP_URL || 'http://localhost:5173'}?page=activate&invite_token=${token}`;
+      const reqHost = req.get('host');
+      const reqProtocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+      const origin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer as string).origin : undefined);
+      const hostUrl = reqHost ? `${reqProtocol}://${reqHost}` : undefined;
+      const baseUrl = (process.env.APP_URL && !process.env.APP_URL.includes('localhost')) 
+        ? process.env.APP_URL 
+        : (origin || hostUrl || process.env.APP_URL || 'http://52.66.240.211');
+      const inviteUrl = `${baseUrl.replace(/\/+$/, '')}/?page=activate&invite_token=${token}`;
 
       // Dispatch invite email asynchronously
       sendInviteEmail({

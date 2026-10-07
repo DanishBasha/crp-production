@@ -57,8 +57,9 @@ export const InviteActivationPage: React.FC = () => {
         setError('The invitation link is invalid or may have expired.');
         setInviteDetails(null);
       }
-    } catch {
-      setError('Unable to resolve invitation link. Please check the code or contact your administrator.');
+    } catch (err: any) {
+      setError(err?.message || 'Unable to resolve invitation link. Please check the code or contact your administrator.');
+      setInviteDetails(null);
     } finally {
       setTokenSearching(false);
     }

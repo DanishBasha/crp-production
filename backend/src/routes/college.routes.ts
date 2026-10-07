@@ -441,7 +441,14 @@ collegeRouter.post(
         [userRows[0].id, collegeId, department, name, email, staffId || null, designation, token]
       );
 
-      const activationLink = `${process.env.APP_URL || 'http://localhost:5173'}?activateToken=${token}&email=${encodeURIComponent(email)}`;
+      const reqHost = req.get('host');
+      const reqProtocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+      const origin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer as string).origin : undefined);
+      const hostUrl = reqHost ? `${reqProtocol}://${reqHost}` : undefined;
+      const baseUrl = (process.env.APP_URL && !process.env.APP_URL.includes('localhost')) 
+        ? process.env.APP_URL 
+        : (origin || hostUrl || process.env.APP_URL || 'http://52.66.240.211');
+      const activationLink = `${baseUrl.replace(/\/+$/, '')}/?activateToken=${token}&email=${encodeURIComponent(email)}`;
 
       sendStaffWelcomeEmail({
         to: email,
