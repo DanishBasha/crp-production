@@ -100,6 +100,122 @@ authRouter.post('/register', async (req: Request, res: Response): Promise<void> 
   }
 });
 
+// ── POST /api/auth/register-institution ────────────────────────────────────────
+
+const registerInstitutionSchema = z.object({
+  institutionName: z.string().min(2).max(255),
+  institutionCode: z.string().min(2).max(20).transform(s => s.toUpperCase()),
+  campusCity: z.string().min(2).max(255),
+  adminName: z.string().min(2).max(255),
+  adminEmail: z.string().email().transform(s => s.toLowerCase()),
+  password: z.string().min(6, 'Password must be at least 6 characters').default('admin123'),
+  contactPhone: z.string().optional(),
+});
+
+authRouter.post('/register-institution', async (req: Request, res: Response): Promise<void> => {
+  const parsed = registerInstitutionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, new AppError(422, 'Validation failed', 'VALIDATION_ERROR'));
+    return;
+  }
+  const { institutionName, institutionCode, campusCity, adminName, adminEmail, password } = parsed.data;
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 1. Get or create institution
+    let instRow: { id: string; name: string; code: string; campus_city: string; created_at: string };
+    const { rows: existingInst } = await client.query(
+      `SELECT id, name, code, type AS campus_city, created_at FROM org.institutions WHERE UPPER(code) = $1 OR LOWER(name) = LOWER($2) LIMIT 1`,
+      [institutionCode, institutionName]
+    );
+
+    if (existingInst.length > 0) {
+      instRow = existingInst[0];
+    } else {
+      const { rows: newInst } = await client.query(
+        `INSERT INTO org.institutions (name, code, type, is_active)
+         VALUES ($1, $2, $3, true)
+         RETURNING id, name, code, type AS campus_city, created_at`,
+        [institutionName, institutionCode, campusCity]
+      );
+      instRow = newInst[0];
+    }
+
+    // 2. Hash admin password
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // 3. Upsert admin user as SUPER_ADMIN
+    const { rows: userRows } = await client.query(
+      `INSERT INTO identity.users (name, email, password_hash, role, status)
+       VALUES ($1, $2, $3, 'SUPER_ADMIN', 'ACTIVE')
+       ON CONFLICT (email) DO UPDATE SET
+         name = EXCLUDED.name,
+         password_hash = EXCLUDED.password_hash,
+         role = 'SUPER_ADMIN',
+         status = 'ACTIVE'
+       RETURNING id, name, email, role, token_version, status`,
+      [adminName, adminEmail, passwordHash]
+    );
+    const user = userRows[0];
+
+    // 4. Role assignment
+    await client.query(
+      `INSERT INTO identity.role_assignments (user_id, role_id, institution_id, scope_type, is_active)
+       SELECT $1, id, $2, 'INSTITUTION', true FROM identity.roles WHERE name = 'SUPER_ADMIN'
+       ON CONFLICT DO NOTHING`,
+      [user.id, instRow.id]
+    ).catch(() => {});
+
+    // 5. Accepted invite record for audit trail
+    await client.query(
+      `INSERT INTO identity.pending_invites (institution_id, role, name, email, token, status, expires_at)
+       VALUES ($1, 'SUPER_ADMIN', $2, $3, encode(gen_random_bytes(16), 'hex'), 'ACCEPTED', now() + interval '365 days')
+       ON CONFLICT DO NOTHING`,
+      [instRow.id, adminName, adminEmail]
+    ).catch(() => {});
+
+    await client.query('COMMIT');
+
+    const authUser: AuthUser = {
+      id: user.id,
+      email: user.email,
+      role: 'SUPER_ADMIN',
+      name: user.name,
+      tokenVersion: user.token_version || 0,
+    };
+    const token = signToken(authUser);
+
+    sendSuccess(res, {
+      college: {
+        id: instRow.id,
+        name: instRow.name,
+        code: instRow.code,
+        campusCity: instRow.campus_city || campusCity,
+        createdAt: instRow.created_at,
+        superAdminStatus: 'ACTIVE',
+        superAdminEmail: user.email,
+        superAdminName: user.name
+      },
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: 'SUPER_ADMIN',
+        collegeId: instRow.id,
+        collegeName: instRow.name
+      },
+      token
+    }, 201);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    sendError(res, err);
+  } finally {
+    client.release();
+  }
+});
+
 // ── POST /api/auth/login ───────────────────────────────────────────────────────
 
 const loginSchema = z.object({
@@ -136,15 +252,20 @@ authRouter.post('/login', async (req: Request, res: Response): Promise<void> => 
          b.track        AS student_track,
          p.id           AS program_id,
          p.name         AS program_name,
-         inst.id        AS institution_id,
-         inst.name      AS institution_name,
+         COALESCE(inst.id, ra_inst.id, inv_inst.id, ds_inst.id) AS institution_id,
+         COALESCE(inst.name, ra_inst.name, inv_inst.name, ds_inst.name) AS institution_name,
          COALESCE(ds.department, fp.department, d.department) AS department
        FROM identity.users u
        LEFT JOIN org.students           s    ON s.user_id     = u.id
        LEFT JOIN org.batches            b    ON b.id          = s.batch_id
        LEFT JOIN org.programs           p    ON p.id          = b.program_id
        LEFT JOIN org.institutions       inst ON inst.id       = p.institution_id
+       LEFT JOIN identity.role_assignments ra ON ra.user_id   = u.id AND ra.is_active = true AND ra.institution_id IS NOT NULL
+       LEFT JOIN org.institutions       ra_inst ON ra_inst.id = ra.institution_id
+       LEFT JOIN identity.pending_invites inv ON lower(inv.email) = lower(u.email) AND inv.institution_id IS NOT NULL
+       LEFT JOIN org.institutions       inv_inst ON inv_inst.id = inv.institution_id
        LEFT JOIN org.department_staff   ds   ON ds.user_id    = u.id
+       LEFT JOIN org.institutions       ds_inst ON ds_inst.id = ds.institution_id
        LEFT JOIN org.faculty_profiles   fp   ON fp.user_id    = u.id
        LEFT JOIN (
          SELECT user_id, MAX(department) AS department

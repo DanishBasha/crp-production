@@ -9,8 +9,8 @@ import { sendInviteEmail } from '../services/emailService';
 
 export const ownerRouter = Router();
 
-// All routes require PLATFORM_OWNER role
-ownerRouter.use(requireRole('PLATFORM_OWNER'));
+// Platform owner or Super Admin role
+ownerRouter.use(requireRole('PLATFORM_OWNER', 'SUPER_ADMIN'));
 
 // ── GET /api/owner/colleges ──────────────────────────────────────────────────
 ownerRouter.get('/colleges', async (_req: Request, res: Response): Promise<void> => {

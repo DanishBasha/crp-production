@@ -1188,14 +1188,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         liveTranscript: '',
         isCompletedAwaitingEvaluation: false
       });
-    } catch {
+    } catch (err) {
+      console.warn('[AppContext] Interview start fallback to dynamic session:', err);
+      const proj = student.resume?.projects?.[0]?.title || `${student.track || student.department || 'Technical'} Capstone Project`;
+      const lang = student.resume?.skills?.languages?.[0] || 'Core Stack';
+      const fallbackQ: QuestionTurn = {
+        id: `q_start_${Date.now()}`,
+        questionNumber: 1,
+        questionText: `Walk me through the system architecture of your project "${proj}". Specifically, how did you design the components using ${lang}, and what was the main engineering challenge you solved?`,
+        difficulty: 'EASY',
+        category: 'System Architecture & Core Principles'
+      };
       setInterviewState({
         isActive: true,
         sessionId: `ses_${Date.now()}`,
         type,
         turnIndex: 0,
         currentDifficulty: 'EASY',
-        questions: MOCK_INTERVIEW_QUESTIONS,
+        questions: [fallbackQ],
         tabSwitches: 0,
         isFlagged: false,
         isDisqualified: false,
@@ -1545,33 +1555,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const uploadResumeData = async (payload: FormData | { resumeText: string; fileName?: string } | ParsedResume): Promise<ParsedResume> => {
-    let parsed: ParsedResume;
-    try {
-      parsed = await api.student.uploadResume(student.id || 'stu-21cs1084', payload);
-    } catch {
-      if ('skills' in payload && 'projects' in payload) {
-        parsed = payload as ParsedResume;
-      } else {
-        parsed = {
-          fileName: 'Uploaded_Resume.pdf',
-          parsedAt: new Date().toISOString().split('T')[0],
-          summary: 'Full-Stack Developer with hands-on experience in Java, Spring Boot, React, and scalable cloud applications.',
-          skills: {
-            languages: ['Java', 'TypeScript', 'SQL'],
-            frameworks: ['Spring Boot', 'React', 'Tailwind CSS'],
-            databases: ['PostgreSQL', 'Redis'],
-            tools: ['Git', 'Docker']
-          },
-          projects: [
-            {
-              title: 'College Placement Readiness Engine',
-              description: 'Real-time diagnostic assessment platform',
-              techStack: ['React', 'Node.js', 'PostgreSQL']
-            }
-          ]
-        };
-      }
-    }
+    const parsed = await api.student.uploadResume(student.id || 'stu-21cs1084', payload);
     setStudent(prev => ({ ...prev, resume: parsed }));
     return parsed;
   };

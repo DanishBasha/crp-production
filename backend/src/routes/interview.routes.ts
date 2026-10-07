@@ -52,14 +52,21 @@ interviewRouter.post('/', async (req: AuthRequest, res: Response): Promise<void>
 
     const student = await getStudentContext(studentId);
 
-    // Use the first active assessment as the template
+    // Use the first active assessment as the template, or auto-create if not yet seeded
+    let assessmentId: string;
     const { rows: assessmentRows } = await db.query(
       `SELECT id FROM assessment.assessments WHERE is_active = true ORDER BY created_at LIMIT 1`
     );
     if (assessmentRows.length === 0) {
-      throw new AppError(503, 'No active assessment configuration found', 'NO_ASSESSMENT');
+      const { rows: createdAssessment } = await db.query(
+        `INSERT INTO assessment.assessments (name, assessment_type, interview_type, is_active)
+         VALUES ('Standard Technical Assessment', 'MOCK_INTERVIEW', 'TECHNICAL', true)
+         RETURNING id`
+      );
+      assessmentId = createdAssessment[0].id;
+    } else {
+      assessmentId = assessmentRows[0].id;
     }
-    const assessmentId: string = assessmentRows[0].id;
 
     // Create attempt
     const { rows: attemptRows } = await db.query(

@@ -26,12 +26,13 @@ function extractPrimarySkillsAndDomain(student: StudentProfile): {
   secondaryTech: string[];
   primaryProject: string;
   domainName: string;
+  domainCategory: 'AI_ML' | 'FULL_STACK' | 'BACKEND' | 'CLOUD_DEVOPS' | 'MOBILE' | 'CYBERSECURITY' | 'GENERAL_CS';
 } {
   const resume = student.resume;
-  let primaryLanguage = 'Java';
-  let secondaryTech = ['PostgreSQL', 'Docker', 'RESTful APIs'];
-  let primaryProject = 'Distributed Services Architecture';
-  let domainName = student.subProgramName || student.programName || student.specialization || student.department || 'Technical Architecture';
+  let primaryLanguage = 'Python';
+  let secondaryTech: string[] = [];
+  let primaryProject = 'Technical Capstone Project';
+  let domainName = student.subProgramName || student.programName || student.track || student.department || 'Computer Science & Engineering';
 
   if (resume?.skills?.languages && resume.skills.languages.length > 0) {
     primaryLanguage = resume.skills.languages[0];
@@ -40,49 +41,129 @@ function extractPrimarySkillsAndDomain(student: StudentProfile): {
       ...(resume.skills.databases || []),
       ...(resume.skills.tools || [])
     ].slice(0, 4);
-  } else if (domainName.toLowerCase().includes('ai') || domainName.toLowerCase().includes('data')) {
-    primaryLanguage = 'Python';
-    secondaryTech = ['PyTorch', 'TensorFlow', 'FastAPI', 'Pandas'];
-  } else if (domainName.toLowerCase().includes('cyber') || domainName.toLowerCase().includes('security')) {
-    primaryLanguage = 'Python / Bash';
-    secondaryTech = ['Wireshark', 'Metasploit', 'Cryptography', 'IAM'];
-  } else if (domainName.toLowerCase().includes('cloud') || domainName.toLowerCase().includes('devops')) {
-    primaryLanguage = 'Go / YAML';
-    secondaryTech = ['Kubernetes', 'Terraform', 'AWS', 'Docker'];
+  } else {
+    // Determine language by track or department if no resume
+    const deptTrack = domainName.toLowerCase();
+    if (deptTrack.includes('ai') || deptTrack.includes('data') || deptTrack.includes('machine learning')) {
+      primaryLanguage = 'Python';
+      secondaryTech = ['PyTorch', 'TensorFlow', 'FastAPI', 'Pandas'];
+    } else if (deptTrack.includes('cloud') || deptTrack.includes('devops')) {
+      primaryLanguage = 'Go';
+      secondaryTech = ['Docker', 'Kubernetes', 'AWS', 'Terraform'];
+    } else if (deptTrack.includes('cyber') || deptTrack.includes('security')) {
+      primaryLanguage = 'Python / Bash';
+      secondaryTech = ['Wireshark', 'Cryptography', 'Linux', 'Network Protocols'];
+    } else if (deptTrack.includes('web') || deptTrack.includes('full stack')) {
+      primaryLanguage = 'TypeScript';
+      secondaryTech = ['React', 'Node.js', 'PostgreSQL', 'Tailwind CSS'];
+    } else {
+      primaryLanguage = 'Java';
+      secondaryTech = ['Spring Boot', 'PostgreSQL', 'Docker', 'RESTful APIs'];
+    }
   }
 
   if (resume?.projects && resume.projects.length > 0) {
     primaryProject = resume.projects[0].title;
+  } else {
+    primaryProject = `${domainName} Application`;
   }
 
-  return { primaryLanguage, secondaryTech, primaryProject, domainName };
+  // Detect domain category for tailored questions
+  const allTechStr = `${primaryLanguage} ${secondaryTech.join(' ')} ${domainName} ${primaryProject}`.toLowerCase();
+  let domainCategory: 'AI_ML' | 'FULL_STACK' | 'BACKEND' | 'CLOUD_DEVOPS' | 'MOBILE' | 'CYBERSECURITY' | 'GENERAL_CS' = 'GENERAL_CS';
+
+  if (allTechStr.includes('python') && (allTechStr.includes('torch') || allTechStr.includes('tensor') || allTechStr.includes('model') || allTechStr.includes('ai') || allTechStr.includes('data') || allTechStr.includes('ml'))) {
+    domainCategory = 'AI_ML';
+  } else if (allTechStr.includes('react') || allTechStr.includes('vue') || allTechStr.includes('frontend') || allTechStr.includes('full stack') || allTechStr.includes('next.js') || allTechStr.includes('javascript') || allTechStr.includes('typescript')) {
+    domainCategory = 'FULL_STACK';
+  } else if (allTechStr.includes('docker') || allTechStr.includes('kubernetes') || allTechStr.includes('devops') || allTechStr.includes('cloud') || allTechStr.includes('aws') || allTechStr.includes('terraform')) {
+    domainCategory = 'CLOUD_DEVOPS';
+  } else if (allTechStr.includes('flutter') || allTechStr.includes('android') || allTechStr.includes('ios') || allTechStr.includes('swift') || allTechStr.includes('react native')) {
+    domainCategory = 'MOBILE';
+  } else if (allTechStr.includes('security') || allTechStr.includes('cyber') || allTechStr.includes('wireshark') || allTechStr.includes('crypt')) {
+    domainCategory = 'CYBERSECURITY';
+  } else if (allTechStr.includes('java') || allTechStr.includes('spring') || allTechStr.includes('golang') || allTechStr.includes('backend') || allTechStr.includes('microservice') || allTechStr.includes('c++')) {
+    domainCategory = 'BACKEND';
+  }
+
+  return { primaryLanguage, secondaryTech, primaryProject, domainName, domainCategory };
 }
 
 function generateDynamicQuestions(student: StudentProfile): QuestionTurn[] {
-  const { primaryLanguage, secondaryTech, primaryProject, domainName } = extractPrimarySkillsAndDomain(student);
-  const techList = secondaryTech.length > 0 ? secondaryTech.join(', ') : 'modern design patterns';
+  const { primaryLanguage, secondaryTech, primaryProject, domainName, domainCategory } = extractPrimarySkillsAndDomain(student);
+  const techList = secondaryTech.length > 0 ? secondaryTech.join(', ') : 'modern architecture patterns';
+
+  // Question 1: Focused on candidate's real project and actual skills
+  const q1Text = `Walk me through the system architecture of your project "${primaryProject}". Specifically, how did you structure the components using ${primaryLanguage} and ${techList}, and what was the main engineering challenge you solved?`;
+
+  // Question 2: Focused on candidate's actual domain
+  let q2Text = '';
+  let q2Category = 'Concurrency & System Architecture';
+  switch (domainCategory) {
+    case 'AI_ML':
+      q2Text = `In machine learning workflows, how do you handle data preprocessing, prevent data leakage during feature engineering, and evaluate model performance beyond simple accuracy (such as precision-recall tradeoffs)?`;
+      q2Category = 'Data Engineering & Model Evaluation';
+      break;
+    case 'FULL_STACK':
+      q2Text = `In a modern web application, suppose page load times are sluggish under high user concurrency. How would you optimize frontend rendering, manage state efficiently, and minimize network payload overhead?`;
+      q2Category = 'Frontend Performance & State Architecture';
+      break;
+    case 'CLOUD_DEVOPS':
+      q2Text = `When deploying services across containerized environments, how do you configure automated CI/CD pipelines, ensure zero-downtime rolling updates, and implement centralized observability?`;
+      q2Category = 'Containerization & Observability';
+      break;
+    case 'CYBERSECURITY':
+      q2Text = `How do you secure API endpoints and sensitive data transmission against common vulnerabilities like CSRF, SQL injection, and unauthorized token manipulation?`;
+      q2Category = 'Application Security & Hardening';
+      break;
+    case 'MOBILE':
+      q2Text = `How do you manage offline data synchronization, background task execution, and smooth UI frame rendering (60 FPS) in a mobile application?`;
+      q2Category = 'Mobile Lifecycle & Offline Sync';
+      break;
+    case 'BACKEND':
+    default:
+      q2Text = `In the context of ${domainName}, suppose query traffic spikes by 10x. How would you diagnose performance bottlenecks, optimize database indexing, and implement caching or asynchronous processing?`;
+      q2Category = 'Concurrency & Scalability';
+      break;
+  }
+
+  // Question 3: Resilience, Edge Cases & Real-world production tradeoffs
+  let q3Text = '';
+  let q3Category = 'Resilience & Production Readiness';
+  switch (domainCategory) {
+    case 'AI_ML':
+      q3Text = `When deploying your model into live production inference, what strategies would you use to handle model latency, batching requests, and monitoring for real-time concept drift?`;
+      break;
+    case 'FULL_STACK':
+    case 'BACKEND':
+      q3Text = `What happens when downstream third-party APIs or database connections intermittently time out? Explain how you implement circuit breakers, retry backoff with jitter, and maintain data consistency.`;
+      break;
+    default:
+      q3Text = `Describe how you design fault-tolerant systems in ${primaryLanguage}. When unexpected failures occur, what automated recovery and telemetry strategies ensure zero data loss?`;
+      break;
+  }
 
   return [
     {
       id: `q_1_${Date.now()}`,
       questionNumber: 1,
-      questionText: `Walk me through the architecture of your project "${primaryProject}". Specifically, how did you structure the components using ${primaryLanguage} and ${techList}, and what was the main engineering challenge you solved?`,
+      questionText: q1Text,
       difficulty: 'EASY',
       category: 'System Architecture & Core Principles'
     },
     {
       id: `q_2_${Date.now() + 1}`,
       questionNumber: 2,
-      questionText: `In the context of ${domainName}, suppose query traffic or concurrent requests spike by 10x. How would you diagnose performance bottlenecks, optimize database query execution, and implement caching or asynchronous processing?`,
+      questionText: q2Text,
       difficulty: 'MEDIUM',
-      category: 'Concurrency & Scalability'
+      category: q2Category
     },
     {
       id: `q_3_${Date.now() + 2}`,
       questionNumber: 3,
-      questionText: `What happens when network partitions or downstream microservice failures occur in your architecture? Explain how you maintain data consistency, handle error propagation, and implement resilient fallback mechanisms.`,
+      questionText: q3Text,
       difficulty: 'ADVANCED',
-      category: 'Resilience & Distributed Trade-offs'
+      category: q3Category
     }
   ];
 }
@@ -288,6 +369,229 @@ function synthesizeDynamicReport(
     actionableNextSteps,
     tabSwitches,
     isFlagged: tabSwitches >= 4
+  };
+}
+
+function parseResumeContent(rawText: string, fileName: string): ParsedResume {
+  const cleanText = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // 1. Programming Languages
+  const knownLanguages = [
+    { name: 'Python', regex: /\bpython\b/i },
+    { name: 'Java', regex: /\bjava\b(?!script)/i },
+    { name: 'JavaScript', regex: /\b(?:javascript|js)\b/i },
+    { name: 'TypeScript', regex: /\b(?:typescript|ts)\b/i },
+    { name: 'C++', regex: /\bc\+\+\b/i },
+    { name: 'C#', regex: /\bc#|\bc-sharp\b/i },
+    { name: 'C', regex: /\b(?<!\w)c(?!\w|\+|#)/i },
+    { name: 'Go', regex: /\b(?:golang|go)\b/i },
+    { name: 'Rust', regex: /\brust\b/i },
+    { name: 'Ruby', regex: /\bruby\b/i },
+    { name: 'PHP', regex: /\bphp\b/i },
+    { name: 'Swift', regex: /\bswift\b/i },
+    { name: 'Kotlin', regex: /\bkotlin\b/i },
+    { name: 'Dart', regex: /\bdart\b/i },
+    { name: 'SQL', regex: /\bsql\b/i },
+    { name: 'HTML/CSS', regex: /\b(?:html|css|html5|css3)\b/i },
+    { name: 'R', regex: /\b(?<!\w)r(?!\w)\b/i },
+    { name: 'Scala', regex: /\bscala\b/i },
+    { name: 'Shell/Bash', regex: /\b(?:bash|shell|powershell)\b/i },
+  ];
+
+  const extractedLanguages = knownLanguages
+    .filter(item => item.regex.test(cleanText))
+    .map(item => item.name);
+
+  // 2. Frameworks & Libraries
+  const knownFrameworks = [
+    { name: 'React', regex: /\breact(?:\.js)?\b/i },
+    { name: 'Node.js', regex: /\bnode(?:\.js)?\b/i },
+    { name: 'Next.js', regex: /\bnext(?:\.js)?\b/i },
+    { name: 'Express.js', regex: /\bexpress(?:\.js)?\b/i },
+    { name: 'Vue.js', regex: /\bvue(?:\.js)?\b/i },
+    { name: 'Angular', regex: /\bangular\b/i },
+    { name: 'Spring Boot', regex: /\bspring(?:\s*boot)?\b/i },
+    { name: 'Django', regex: /\bdjango\b/i },
+    { name: 'FastAPI', regex: /\bfastapi\b/i },
+    { name: 'Flask', regex: /\bflask\b/i },
+    { name: 'ASP.NET', regex: /\basp\.net|\b\.net\b/i },
+    { name: 'Tailwind CSS', regex: /\btailwind(?:\s*css)?\b/i },
+    { name: 'Bootstrap', regex: /\bbootstrap\b/i },
+    { name: 'TensorFlow', regex: /\btensorflow\b/i },
+    { name: 'PyTorch', regex: /\bpytorch\b/i },
+    { name: 'Keras', regex: /\bkeras\b/i },
+    { name: 'Scikit-learn', regex: /\bscikit(?:-learn)?|sklearn\b/i },
+    { name: 'Flutter', regex: /\bflutter\b/i },
+    { name: 'React Native', regex: /\breact\s*native\b/i },
+    { name: 'Redux', regex: /\bredux\b/i },
+    { name: 'GraphQL', regex: /\bgraphql\b/i },
+  ];
+
+  const extractedFrameworks = knownFrameworks
+    .filter(item => item.regex.test(cleanText))
+    .map(item => item.name);
+
+  // 3. Databases
+  const knownDatabases = [
+    { name: 'PostgreSQL', regex: /\bpostgres(?:ql)?\b/i },
+    { name: 'MySQL', regex: /\bmysql\b/i },
+    { name: 'MongoDB', regex: /\bmongo(?:db)?\b/i },
+    { name: 'Redis', regex: /\bredis\b/i },
+    { name: 'SQLite', regex: /\bsqlite\b/i },
+    { name: 'Oracle', regex: /\boracle(?:\s*db)?\b/i },
+    { name: 'Firebase', regex: /\bfirebase(?:\s*firestore)?\b/i },
+    { name: 'Supabase', regex: /\bsupabase\b/i },
+    { name: 'Cassandra', regex: /\bcassandra\b/i },
+    { name: 'DynamoDB', regex: /\bdynamodb\b/i },
+    { name: 'Elasticsearch', regex: /\belasticsearch\b/i },
+    { name: 'Neo4j', regex: /\bneo4j\b/i },
+  ];
+
+  const extractedDatabases = knownDatabases
+    .filter(item => item.regex.test(cleanText))
+    .map(item => item.name);
+
+  // 4. Tools & Cloud / DevOps
+  const knownTools = [
+    { name: 'Git', regex: /\bgit\b(?!\w)/i },
+    { name: 'GitHub', regex: /\bgithub\b/i },
+    { name: 'GitLab', regex: /\bgitlab\b/i },
+    { name: 'Docker', regex: /\bdocker\b/i },
+    { name: 'Kubernetes', regex: /\bkubernetes|k8s\b/i },
+    { name: 'AWS', regex: /\baws|amazon web services\b/i },
+    { name: 'Azure', regex: /\bazure\b/i },
+    { name: 'Google Cloud (GCP)', regex: /\b(?:gcp|google cloud)\b/i },
+    { name: 'Linux', regex: /\blinux|ubuntu\b/i },
+    { name: 'Kafka', regex: /\bkafka\b/i },
+    { name: 'Jenkins', regex: /\bjenkins\b/i },
+    { name: 'Terraform', regex: /\bterraform\b/i },
+    { name: 'Postman', regex: /\bpostman\b/i },
+    { name: 'Figma', regex: /\bfigma\b/i },
+    { name: 'Jira', regex: /\bjira\b/i },
+    { name: 'Nginx', regex: /\bnginx\b/i },
+    { name: 'Vercel', regex: /\bvercel\b/i },
+  ];
+
+  const extractedTools = knownTools
+    .filter(item => item.regex.test(cleanText))
+    .map(item => item.name);
+
+  // 5. Intelligent Project Extraction
+  const lines = cleanText.split('\n').map(l => l.trim()).filter(Boolean);
+  const detectedProjects: { title: string; techStack: string[]; description: string }[] = [];
+
+  let projectSectionIndex = -1;
+  const projectHeaders = [
+    /^projects$/i, /^academic projects$/i, /^personal projects$/i, 
+    /^key projects$/i, /^featured projects$/i, /^work experience$/i,
+    /^experience$/i, /^relevant projects$/i, /^technical projects$/i
+  ];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (projectHeaders.some(h => h.test(line)) || (/project/i.test(line) && line.length < 30 && !line.includes('.'))) {
+      projectSectionIndex = i;
+      break;
+    }
+  }
+
+  if (projectSectionIndex !== -1) {
+    let currentTitle = '';
+    let currentDescLines: string[] = [];
+    const sectionLines = lines.slice(projectSectionIndex + 1, projectSectionIndex + 45);
+    const stopHeaders = [/education/i, /skills/i, /certifications/i, /awards/i, /achievements/i, /publications/i, /interests/i];
+
+    for (let j = 0; j < sectionLines.length; j++) {
+      const line = sectionLines[j];
+      if (stopHeaders.some(sh => sh.test(line) && line.length < 30)) {
+        break;
+      }
+
+      const isHeaderLike = line.length < 60 && !line.startsWith('•') && !line.startsWith('-') && !line.startsWith('*') &&
+        (line.includes('|') || line.includes('–') || line.includes('-') || line.includes(':') || /^[A-Z][A-Za-z0-9\s]{3,40}$/.test(line));
+
+      if (isHeaderLike && currentTitle && currentDescLines.length > 0) {
+        const titleParts = currentTitle.split(/[|–\-:]/);
+        const title = titleParts[0].trim();
+        const combinedDesc = currentDescLines.join(' ');
+        const projTech = [...extractedLanguages, ...extractedFrameworks, ...extractedDatabases, ...extractedTools]
+          .filter(t => new RegExp(`\\b${t.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i').test(currentTitle + ' ' + combinedDesc));
+
+        detectedProjects.push({
+          title,
+          techStack: projTech.length > 0 ? projTech.slice(0, 5) : extractedLanguages.slice(0, 2),
+          description: combinedDesc.slice(0, 260) || 'Engineered functional requirements with clean component structure and modular patterns.'
+        });
+
+        currentTitle = line;
+        currentDescLines = [];
+      } else if (isHeaderLike && !currentTitle) {
+        currentTitle = line;
+      } else if (currentTitle) {
+        currentDescLines.push(line.replace(/^[•\-\*]\s*/, ''));
+      }
+    }
+
+    if (currentTitle && currentDescLines.length > 0 && detectedProjects.length < 3) {
+      const titleParts = currentTitle.split(/[|–\-:]/);
+      const title = titleParts[0].trim();
+      const combinedDesc = currentDescLines.join(' ');
+      const projTech = [...extractedLanguages, ...extractedFrameworks, ...extractedDatabases, ...extractedTools]
+        .filter(t => new RegExp(`\\b${t.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i').test(currentTitle + ' ' + combinedDesc));
+
+      detectedProjects.push({
+        title,
+        techStack: projTech.length > 0 ? projTech.slice(0, 5) : extractedLanguages.slice(0, 2),
+        description: combinedDesc.slice(0, 260) || 'Developed technical system architecture with end-to-end testing and integration.'
+      });
+    }
+  }
+
+  if (detectedProjects.length === 0) {
+    const projectKeywords = ['platform', 'application', 'system', 'engine', 'tracker', 'dashboard', 'portal', 'analyzer', 'manager', 'service', 'bot', 'website', 'app'];
+    for (const line of lines) {
+      if (line.length > 10 && line.length < 75 && projectKeywords.some(pk => new RegExp(`\\b${pk}\\b`, 'i').test(line)) && !line.startsWith('•')) {
+        const title = line.split(/[|–\-:]/)[0].trim();
+        if (title.length > 4 && !detectedProjects.some(p => p.title.toLowerCase() === title.toLowerCase())) {
+          const projTech = [...extractedLanguages, ...extractedFrameworks, ...extractedDatabases, ...extractedTools]
+            .filter(t => new RegExp(`\\b${t.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i').test(cleanText));
+          detectedProjects.push({
+            title,
+            techStack: projTech.slice(0, 4),
+            description: `Hands-on project developing ${title} utilizing ${projTech.slice(0, 3).join(', ') || 'modern programming principles'}.`
+          });
+          if (detectedProjects.length >= 2) break;
+        }
+      }
+    }
+  }
+
+  if (detectedProjects.length === 0) {
+    const primaryL = extractedLanguages[0] || 'Full-Stack';
+    const primaryF = extractedFrameworks[0] || extractedDatabases[0] || 'Software Architecture';
+    detectedProjects.push({
+      title: `${primaryL} & ${primaryF} Technical Project`,
+      techStack: extractedLanguages.concat(extractedFrameworks).concat(extractedDatabases).slice(0, 4),
+      description: `Architected and implemented modular software system with ${extractedLanguages.slice(0, 2).join(' and ') || 'modern design patterns'} and comprehensive testing.`
+    });
+  }
+
+  const topTech = [...extractedLanguages, ...extractedFrameworks, ...extractedDatabases].slice(0, 4);
+  const candidateSummary = topTech.length > 0
+    ? `Technical candidate with verified proficiency in ${topTech.join(', ')}${extractedTools.length > 0 ? ` and tooling with ${extractedTools.slice(0, 2).join(', ')}` : ''}. Proven project delivery in "${detectedProjects[0]?.title}".`
+    : `Software engineering student with core background in development and technical problem solving.`;
+
+  return {
+    fileName,
+    parsedAt: new Date().toISOString().split('T')[0],
+    summary: candidateSummary,
+    skills: {
+      languages: extractedLanguages.length > 0 ? extractedLanguages : ['Java', 'Python', 'SQL'],
+      frameworks: extractedFrameworks,
+      databases: extractedDatabases,
+      tools: extractedTools
+    },
+    projects: detectedProjects
   };
 }
 
@@ -1157,22 +1461,28 @@ class ApiClient {
       const cleanAdminEmail = data.adminEmail.toLowerCase().trim();
       const pwd = (data.password && data.password.trim()) || 'admin123';
 
-      const college = await this.owner.createCollege({
-        name: cleanInstName,
-        code: cleanInstCode,
-        campusCity: cleanCity
+      const res = await this._fetch<{
+        data: {
+          college: College;
+          user: AuthUser;
+          token: string;
+        }
+      }>('/auth/register-institution', {
+        method: 'POST',
+        body: JSON.stringify({
+          institutionName: cleanInstName,
+          institutionCode: cleanInstCode,
+          campusCity: cleanCity,
+          adminName: cleanAdminName,
+          adminEmail: cleanAdminEmail,
+          password: pwd,
+          contactPhone: data.contactPhone
+        }),
       });
 
-      const parts = cleanAdminName.split(' ');
-      const firstName = parts[0] || 'Admin';
-      const lastName = parts.slice(1).join(' ') || '';
-      const inviteRes = await this.owner.inviteSuperAdmin(college.id, {
-        firstName,
-        lastName,
-        email: cleanAdminEmail
-      });
-
-      const { user, token } = await this.invites.completePasswordSetup(inviteRes.invite.token, pwd);
+      const { college, user, token } = res.data;
+      this.setToken(token);
+      this.setStorage('auth_user', user);
 
       return {
         college,
@@ -1254,39 +1564,7 @@ class ApiClient {
       } else {
         const rawText = (payload as any)?.resumeText || '';
         const fileName = (payload as any)?.fileName || 'Uploaded_Resume.pdf';
-        
-        const extractedLanguages: string[] = [];
-        const langMap = ['Python', 'Java', 'TypeScript', 'JavaScript', 'C++', 'Go', 'Rust', 'SQL', 'C#', 'PHP'];
-        langMap.forEach(l => {
-          if (new RegExp(`\\b${l}\\b`, 'i').test(rawText)) extractedLanguages.push(l);
-        });
-
-        const extractedFrameworks: string[] = [];
-        const frameMap = ['React', 'Node.js', 'Spring Boot', 'FastAPI', 'Express', 'Django', 'Docker', 'Kubernetes', 'Tailwind', 'Next.js', 'PyTorch', 'TensorFlow'];
-        frameMap.forEach(f => {
-          if (new RegExp(`\\b${f.replace('.', '\\.')}\\b`, 'i').test(rawText)) extractedFrameworks.push(f);
-        });
-
-        parsed = {
-          fileName,
-          parsedAt: new Date().toISOString().split('T')[0],
-          summary: extractedLanguages.length > 0 
-            ? `Specialized candidate with expertise in ${extractedLanguages.join(', ')} and ${extractedFrameworks.slice(0, 3).join(', ')}.`
-            : 'Software Engineering candidate with hands-on full-stack development experience.',
-          skills: {
-            languages: extractedLanguages.length > 0 ? extractedLanguages : ['Java', 'TypeScript', 'SQL', 'Python'],
-            frameworks: extractedFrameworks.length > 0 ? extractedFrameworks : ['Spring Boot', 'React', 'Tailwind CSS', 'Docker'],
-            databases: ['PostgreSQL', 'Redis'],
-            tools: ['Git', 'Docker', 'Kafka']
-          },
-          projects: [
-            {
-              title: rawText.includes('Platform') ? 'Communication & Placement Engine' : 'High-Throughput Distributed Microservice',
-              description: 'Designed and deployed low-latency transactional workflows with automated telemetry and resilience testing.',
-              techStack: extractedLanguages.concat(extractedFrameworks).slice(0, 4)
-            }
-          ]
-        };
+        parsed = parseResumeContent(rawText, fileName);
       }
 
       await this._fetch(`/students/${encodeURIComponent(studentId)}/resume-data`, {

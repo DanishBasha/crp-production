@@ -7,6 +7,95 @@ interface ResumeUploadModalProps {
   onClose: () => void;
 }
 
+async function extractTextFromPdf(file: File): Promise<string> {
+  // 1. Try PDF.js via CDN dynamic loader
+  try {
+    if (!(window as any).pdfjsLib) {
+      await new Promise<void>((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('PDF.js CDN load failed'));
+        document.head.appendChild(script);
+      });
+      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await (window as any).pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const strings = content.items.map((item: any) => item.str).join(' ');
+      fullText += strings + '\n';
+    }
+    if (fullText.trim().length > 25) {
+      return fullText.trim();
+    }
+  } catch (e) {
+    console.warn('[ResumeUpload] PDF.js CDN unavailable, attempting binary stream extraction:', e);
+  }
+
+  // 2. Fallback: Parse text directly from raw binary stream
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    const binaryStr = new TextDecoder('latin1').decode(uint8);
+
+    const textParts: string[] = [];
+    const tjRegex = /\(([^()]{2,})\)\s*(?:Tj|'|")/g;
+    let match: RegExpExecArray | null;
+    while ((match = tjRegex.exec(binaryStr)) !== null) {
+      const clean = match[1].replace(/\\([()\\])/g, '$1').trim();
+      if (clean.length > 1) {
+        textParts.push(clean);
+      }
+    }
+
+    const arrayTjRegex = /\[(.*?)\]\s*TJ/g;
+    while ((match = arrayTjRegex.exec(binaryStr)) !== null) {
+      const inner = match[1];
+      const innerMatches = inner.match(/\(([^()]+)\)/g);
+      if (innerMatches) {
+        const joined = innerMatches.map(m => m.slice(1, -1).replace(/\\([()\\])/g, '$1')).join('');
+        if (joined.trim().length > 1) {
+          textParts.push(joined.trim());
+        }
+      }
+    }
+
+    return textParts.join(' ');
+  } catch {
+    return '';
+  }
+}
+
+async function extractTextFromDocx(file: File): Promise<string> {
+  try {
+    const buffer = await file.arrayBuffer();
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(buffer));
+    const wtRegex = /<w:t(?:\s+[^>]*)?>([^<]+)<\/w:t>/g;
+    const parts: string[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = wtRegex.exec(text)) !== null) {
+      parts.push(m[1]);
+    }
+    if (parts.length > 0) return parts.join(' ');
+  } catch {}
+  return '';
+}
+
+async function extractTextFromFile(file: File): Promise<string> {
+  const ext = file.name.split('.').pop()?.toLowerCase();
+  if (ext === 'pdf') {
+    return extractTextFromPdf(file);
+  }
+  if (ext === 'docx') {
+    return extractTextFromDocx(file);
+  }
+  return file.text();
+}
+
 export const ResumeUploadModal: React.FC<ResumeUploadModalProps> = ({ onClose }) => {
   useBackHandler(true, onClose);
   const { student, uploadResumeData } = useApp();
@@ -22,9 +111,14 @@ export const ResumeUploadModal: React.FC<ResumeUploadModalProps> = ({ onClose })
     setErrorMessage(null);
     setIsProcessing(true);
     try {
-      const formData = new FormData();
-      formData.append('resume', file);
-      await uploadResumeData(formData);
+      const extractedText = await extractTextFromFile(file);
+      if (!extractedText || extractedText.trim().length < 20) {
+        throw new Error('Could not extract readable text from this file. Please paste your resume text in the "Paste Text" tab.');
+      }
+      await uploadResumeData({
+        resumeText: extractedText.trim(),
+        fileName: file.name
+      });
       setActiveTab('extracted');
     } catch (err: any) {
       console.error('Resume upload error:', err);
