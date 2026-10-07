@@ -103,19 +103,20 @@ authRouter.post('/register', async (req: Request, res: Response): Promise<void> 
 // ── POST /api/auth/register-institution ────────────────────────────────────────
 
 const registerInstitutionSchema = z.object({
-  institutionName: z.string().min(2).max(255),
-  institutionCode: z.string().min(2).max(20).transform(s => s.toUpperCase()),
-  campusCity: z.string().min(2).max(255),
-  adminName: z.string().min(2).max(255),
-  adminEmail: z.string().email().transform(s => s.toLowerCase()),
-  password: z.string().min(6, 'Password must be at least 6 characters').default('admin123'),
-  contactPhone: z.string().optional(),
+  institutionName: z.string().min(2, 'Institution name must be at least 2 characters').max(255),
+  institutionCode: z.string().min(2, 'Institution code must be at least 2 characters').max(20).transform(s => s.toUpperCase()),
+  campusCity: z.string().min(2, 'City must be at least 2 characters').max(255),
+  adminName: z.string().min(2, 'Admin name must be at least 2 characters').max(255),
+  adminEmail: z.string().email('Valid admin email is required').transform(s => s.toLowerCase()),
+  password: z.string().optional().transform(p => (p && p.trim().length >= 6 ? p.trim() : 'admin123')),
+  contactPhone: z.string().optional().nullable(),
 });
 
 authRouter.post('/register-institution', async (req: Request, res: Response): Promise<void> => {
   const parsed = registerInstitutionSchema.safeParse(req.body);
   if (!parsed.success) {
-    sendError(res, new AppError(422, 'Validation failed', 'VALIDATION_ERROR'));
+    const detail = parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ');
+    sendError(res, new AppError(422, `Validation failed: ${detail}`, 'VALIDATION_ERROR'));
     return;
   }
   const { institutionName, institutionCode, campusCity, adminName, adminEmail, password } = parsed.data;
