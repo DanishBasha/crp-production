@@ -24,7 +24,7 @@ function persistShortLog(line: string) {
   try {
     const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
     const isLocal = rawApiUrl.includes('localhost') || rawApiUrl.includes('127.0.0.1');
-    const logUrl = (import.meta.env.PROD && isLocal) || !rawApiUrl
+    const logUrl = (import.meta.env.PROD || !rawApiUrl || isLocal)
       ? '/api/logs'
       : `${rawApiUrl.replace(/\/+$/, '')}/api/logs`;
     fetch(logUrl, {

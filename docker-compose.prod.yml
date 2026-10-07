@@ -40,6 +40,7 @@ services:
       AI_SERVICE_URL: http://ai-service:8000
       REDIS_URL: redis://redis:6379
       APP_URL: http://52.66.240.211
+      CORS_ORIGIN: "*"
     ports:
       - "5000:5000"
     depends_on:

@@ -378,11 +378,23 @@ class ApiClient {
     }
     const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
     const isLocal = rawApiUrl.includes('localhost') || rawApiUrl.includes('127.0.0.1');
-    const apiBase = (import.meta.env.PROD && isLocal) || !rawApiUrl
-      ? '/api'
-      : `${rawApiUrl.replace(/\/+$/, '')}/api`;
-    const res = await fetch(`${apiBase}${path}`, { ...options, headers });
+
+    const cleanPath = path.startsWith('/api/')
+      ? path
+      : path.startsWith('/')
+      ? `/api${path}`
+      : `/api/${path}`;
+
+    const url = (import.meta.env.PROD || !rawApiUrl || isLocal)
+      ? cleanPath
+      : `${rawApiUrl.replace(/\/+$/, '')}${cleanPath}`;
+
+    const res = await fetch(url, { ...options, headers });
     if (!res.ok) {
+      if (res.status === 401) {
+        this.setToken(null);
+        try { localStorage.removeItem('auth_user'); } catch {}
+      }
       let msg = `HTTP ${res.status}`;
       try {
         const body = await res.json();
