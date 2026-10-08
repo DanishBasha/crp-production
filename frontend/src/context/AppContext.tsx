@@ -309,10 +309,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const getInitialView = (): AppView => {
     if (typeof window === 'undefined') return 'DASHBOARD';
     const params = new URLSearchParams(window.location.search);
-    if (params.get('page') === 'activate' || params.has('invite_token')) {
+    const hash = window.location.hash;
+    const tokenFromSearch = params.get('invite_token');
+    let tokenFromHash: string | null = null;
+    if (hash.includes('invite_token=')) {
+      const match = hash.match(/invite_token=([^&]+)/);
+      tokenFromHash = match ? match[1] : null;
+    }
+    const token = tokenFromSearch || tokenFromHash;
+    if (token) {
+      try { sessionStorage.setItem('crp_pending_invite_token', token); } catch {}
+    }
+    if (params.get('page') === 'activate' || token || hash.includes('activate')) {
       return 'ACTIVATE_INVITE';
     }
-    const hash = window.location.hash;
     return HASH_TO_VIEW[hash] || 'DASHBOARD';
   };
 
@@ -417,7 +427,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (typeof window === 'undefined') return;
 
     const initial = getInitialView();
-    const targetHash = VIEW_TO_HASH[initial] || '#/dashboard';
+    let targetHash = VIEW_TO_HASH[initial] || '#/dashboard';
+    if (initial === 'ACTIVATE_INVITE') {
+      const search = window.location.search;
+      if (search) {
+        targetHash = `${targetHash}${search}`;
+      }
+    }
 
     // Seed root guard if history stack does not have our markers
     if (!window.history.state || (!window.history.state.crpGuard && !window.history.state.crpApp)) {

@@ -37,8 +37,18 @@ export const InviteActivationPage: React.FC = () => {
 
   // Check URL params on mount
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('invite_token');
+    const searchParams = new URLSearchParams(window.location.search);
+    let token = searchParams.get('invite_token');
+    if (!token && window.location.hash.includes('invite_token=')) {
+      const hashQuery = window.location.hash.split('?')[1] || window.location.hash;
+      const hashParams = new URLSearchParams(hashQuery.replace(/^#\/?[^?]*\??/, ''));
+      token = hashParams.get('invite_token');
+    }
+    if (!token) {
+      try {
+        token = sessionStorage.getItem('crp_pending_invite_token');
+      } catch {}
+    }
     if (token) {
       setInviteToken(token);
       lookupToken(token);
@@ -79,6 +89,7 @@ export const InviteActivationPage: React.FC = () => {
     setSubmitting(true);
     try {
       await completeInviteActivation(inviteToken.trim(), invitePassword);
+      try { sessionStorage.removeItem('crp_pending_invite_token'); } catch {}
       setSuccessMsg('Account activated successfully! Launching your designated portal...');
       setTimeout(() => {
         setActiveView('DASHBOARD');
