@@ -109,9 +109,9 @@ ownerRouter.post('/colleges', async (req: Request, res: Response): Promise<void>
 
 // ── POST /api/owner/colleges/:collegeId/invite-super-admin ──────────────────
 const inviteSuperAdminSchema = z.object({
-  firstName: z.string().min(1).max(255),
-  lastName: z.string().min(1).max(255),
-  email: z.string().email().transform(s => s.toLowerCase()),
+  firstName: z.string().trim().min(1, 'First name is required').max(255),
+  lastName: z.string().trim().max(255).nullish().transform(s => s || ''),
+  email: z.string().trim().email('Valid email address is required').transform(s => s.toLowerCase()),
 });
 
 ownerRouter.post(
@@ -121,7 +121,8 @@ ownerRouter.post(
       const collegeId = Array.isArray(req.params.collegeId) ? req.params.collegeId[0] : (req.params.collegeId || '');
       const parsed = inviteSuperAdminSchema.safeParse(req.body);
       if (!parsed.success) {
-        throw new AppError(422, 'Validation failed', 'VALIDATION_ERROR');
+        const issues = parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ');
+        throw new AppError(422, `Validation failed: ${issues}`, 'VALIDATION_ERROR');
       }
 
       const { firstName, lastName, email } = parsed.data;
