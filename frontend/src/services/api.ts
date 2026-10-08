@@ -566,27 +566,19 @@ function parseResumeContent(rawText: string, fileName: string): ParsedResume {
     }
   }
 
-  if (detectedProjects.length === 0) {
-    const primaryL = extractedLanguages[0] || 'Full-Stack';
-    const primaryF = extractedFrameworks[0] || extractedDatabases[0] || 'Software Architecture';
-    detectedProjects.push({
-      title: `${primaryL} & ${primaryF} Technical Project`,
-      techStack: extractedLanguages.concat(extractedFrameworks).concat(extractedDatabases).slice(0, 4),
-      description: `Architected and implemented modular software system with ${extractedLanguages.slice(0, 2).join(' and ') || 'modern design patterns'} and comprehensive testing.`
-    });
-  }
-
   const topTech = [...extractedLanguages, ...extractedFrameworks, ...extractedDatabases].slice(0, 4);
   const candidateSummary = topTech.length > 0
-    ? `Technical candidate with verified proficiency in ${topTech.join(', ')}${extractedTools.length > 0 ? ` and tooling with ${extractedTools.slice(0, 2).join(', ')}` : ''}. Proven project delivery in "${detectedProjects[0]?.title}".`
-    : `Software engineering student with core background in development and technical problem solving.`;
+    ? `Technical candidate with verified proficiency in ${topTech.join(', ')}${extractedTools.length > 0 ? ` and tooling with ${extractedTools.slice(0, 2).join(', ')}` : ''}.${detectedProjects.length > 0 ? ` Proven project experience in "${detectedProjects[0]?.title}".` : ''}`
+    : (detectedProjects.length > 0
+      ? `Candidate with practical project delivery in "${detectedProjects[0]?.title}".`
+      : `Verified candidate credentials.`);
 
   return {
     fileName,
     parsedAt: new Date().toISOString().split('T')[0],
     summary: candidateSummary,
     skills: {
-      languages: extractedLanguages.length > 0 ? extractedLanguages : ['Java', 'Python', 'SQL'],
+      languages: extractedLanguages,
       frameworks: extractedFrameworks,
       databases: extractedDatabases,
       tools: extractedTools
@@ -1444,11 +1436,14 @@ class ApiClient {
       if (!cleanEmail) {
         throw new Error('Please enter your registered email address.');
       }
+      const res = await this._fetch<{ status: string; data: { message: string; email: string } }>('/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email: cleanEmail }),
+      });
       return {
         success: true,
         email: cleanEmail,
-        otp: '123456',
-        message: `A verification code has been dispatched to ${cleanEmail}.`
+        message: res.data?.message || `A verification code has been dispatched to ${cleanEmail}.`
       };
     },
 
@@ -1457,16 +1452,13 @@ class ApiClient {
       const newPwd = data.newPassword.trim();
       if (!cleanEmail) throw new Error('Email is required.');
       if (!newPwd || newPwd.length < 6) throw new Error('Password must be at least 6 characters.');
+      const res = await this._fetch<{ status: string; data: { message: string } }>('/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({ email: cleanEmail, otp: data.otp, newPassword: newPwd }),
+      });
       return {
         success: true,
-        user: {
-          id: `usr_${Date.now()}`,
-          name: cleanEmail.split('@')[0],
-          email: cleanEmail,
-          role: 'STUDENT' as const,
-        },
-        token: `jwt_rst_${Date.now()}`,
-        message: 'Password reset successfully!'
+        message: res.data?.message || 'Password reset successfully!'
       };
     },
 
@@ -1620,11 +1612,31 @@ class ApiClient {
 
   interview = {
     start: async (studentId: string, type: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION' | 'PRACTICE' = 'MOCK_INTERVIEW'): Promise<{ sessionId: string; firstQuestion: QuestionTurn }> => {
-      const sessionId = `ses_${Date.now()}`;
+      try {
+        const res = await this._fetch<{ data: { sessionId: string; firstQuestion: QuestionTurn } }>('/interview/start', {
+          method: 'POST',
+          body: JSON.stringify({ studentId, type }),
+        });
+        if (res?.data?.sessionId && res.data.firstQuestion) {
+          const sess = {
+            sessionId: res.data.sessionId,
+            type,
+            turnIndex: 0,
+            questions: [res.data.firstQuestion],
+            tabSwitches: 0
+          };
+          this.setStorage(`interview_${res.data.sessionId}`, sess);
+          return res.data;
+        }
+      } catch (err) {
+        console.warn('[api.interview.start] Real backend start fallback:', err);
+      }
+
+      // Dynamic fallback based on real student profile
       const student = await this.student.getProfile(studentId);
       const dynamicTurns = generateDynamicQuestions(student);
       const firstQ = dynamicTurns[0];
-
+      const sessionId = `ses_${Date.now()}`;
       const sessionData = {
         sessionId,
         type,
@@ -1634,32 +1646,80 @@ class ApiClient {
         tabSwitches: 0
       };
       this.setStorage(`interview_${sessionId}`, sessionData);
-
       return { sessionId, firstQuestion: firstQ };
     },
 
-    recordProctorEvent: async (sessionId: string, _eventType: 'TAB_SWITCH' | 'FULLSCREEN_EXIT') => {
+    recordProctorEvent: async (sessionId: string, eventType: 'TAB_SWITCH' | 'FULLSCREEN_EXIT') => {
       const sess = this.getStorage<any>(`interview_${sessionId}`, { tabSwitches: 0 });
       sess.tabSwitches = (sess.tabSwitches || 0) + 1;
       const isFlagged = sess.tabSwitches >= 4;
       this.setStorage(`interview_${sessionId}`, sess);
+      try {
+        await this._fetch('/interview/proctor-event', {
+          method: 'POST',
+          body: JSON.stringify({ sessionId, eventType, tabSwitches: sess.tabSwitches })
+        });
+      } catch {}
       return { tabSwitches: sess.tabSwitches, isFlagged };
     },
 
-    submitAnswer: async (sessionId: string, studentAnswer: string, durationSeconds = 20) => {
+    submitAnswer: async (sessionId: string, studentAnswer: string, durationSeconds = 20): Promise<{
+      isCompleted: boolean;
+      turnEvaluation?: QuestionTurn;
+      nextQuestion?: QuestionTurn;
+      finalReport?: DiagnosticReport;
+    }> => {
       const sess = this.getStorage<any>(`interview_${sessionId}`, {
         turnIndex: 0,
         questions: [],
-        plannedTurns: [],
         tabSwitches: 0
       });
-
-      const student = await this.student.getProfile();
       const turnIdx = sess.turnIndex || 0;
-      const currentQ = sess.questions[turnIdx] || (sess.plannedTurns && sess.plannedTurns[turnIdx]) || MOCK_INTERVIEW_QUESTIONS[0];
+      const currentQ = sess.questions[turnIdx] || { questionNumber: turnIdx + 1, questionText: 'Technical interview question', difficulty: 'MEDIUM', category: 'Engineering' };
 
+      try {
+        const student = await this.student.getProfile();
+        const res = await this._fetch<{
+          data: {
+            isCompleted: boolean;
+            turnEvaluation: QuestionTurn;
+            nextQuestion?: QuestionTurn;
+            finalReport?: DiagnosticReport;
+          }
+        }>('/interview/submit-turn', {
+          method: 'POST',
+          body: JSON.stringify({
+            sessionId,
+            studentId: student?.id,
+            studentAnswer,
+            durationSeconds,
+            turnIndex: turnIdx,
+            currentQuestion: currentQ,
+            previousTurns: sess.questions.slice(0, turnIdx),
+            sessionType: sess.type || 'MOCK_INTERVIEW',
+            tabSwitches: sess.tabSwitches || 0
+          }),
+        });
+
+        if (res?.data?.turnEvaluation) {
+          sess.questions[turnIdx] = res.data.turnEvaluation;
+          if (!res.data.isCompleted && res.data.nextQuestion) {
+            sess.turnIndex = turnIdx + 1;
+            sess.questions.push(res.data.nextQuestion);
+          }
+          if (res.data.isCompleted && res.data.finalReport) {
+            sess.finalReport = res.data.finalReport;
+          }
+          this.setStorage(`interview_${sessionId}`, sess);
+          return res.data;
+        }
+      } catch (err) {
+        console.warn('[api.interview.submitAnswer] Real AI backend evaluation fallback:', err);
+      }
+
+      // Local fallback calculation if backend was unreachable
+      const student = await this.student.getProfile();
       const evalResult = evaluateDynamicAnswer(currentQ, studentAnswer, turnIdx, durationSeconds, student);
-
       const turnEvaluation: QuestionTurn = {
         id: currentQ.id || `q_${turnIdx + 1}`,
         questionNumber: turnIdx + 1,
@@ -1678,63 +1738,38 @@ class ApiClient {
 
       sess.questions[turnIdx] = turnEvaluation;
       const isCompleted = turnIdx >= 2;
-
       let nextQuestion: QuestionTurn | undefined = undefined;
       let finalReport: DiagnosticReport | undefined = undefined;
 
       if (!isCompleted) {
         const nextDiff = turnIdx === 0 ? 'MEDIUM' : 'ADVANCED';
-        const fallbackNext = sess.plannedTurns && sess.plannedTurns[turnIdx + 1] ? sess.plannedTurns[turnIdx + 1].questionText : "Walk me through how you handle distributed latency.";
-        const nextQText = evalResult.nextQuestionText || fallbackNext;
-
         nextQuestion = {
           id: `q_${turnIdx + 2}_${Date.now()}`,
           questionNumber: turnIdx + 2,
-          questionText: nextQText,
+          questionText: evalResult.nextQuestionText || "Can you elaborate on how you design scalable distributed systems?",
           difficulty: nextDiff,
           category: turnIdx === 0 ? 'Scalability & Concurrency' : 'Resilience & Architecture'
         };
-
         sess.turnIndex = turnIdx + 1;
         sess.questions.push(nextQuestion);
       } else {
-        finalReport = synthesizeDynamicReport(
-          sess.type || 'MOCK_INTERVIEW',
-          sess.questions,
-          student,
-          sess.tabSwitches || 0
-        );
-
-        student.recentReports = [finalReport, ...(student.recentReports || [])];
-        student.overallReadiness = finalReport.overallScore;
-        student.score = finalReport.overallScore;
-
+        finalReport = synthesizeDynamicReport(sess.type || 'MOCK_INTERVIEW', sess.questions, student, sess.tabSwitches || 0);
         if (student.id) {
           this._fetch(`/students/${encodeURIComponent(student.id)}/reports`, {
             method: 'POST',
             body: JSON.stringify(finalReport)
-          }).catch(e => console.warn('Failed to save interview report to backend:', e));
-
-          this._fetch(`/students/${encodeURIComponent(student.id)}/profile`, {
-            method: 'PUT',
-            body: JSON.stringify({ overallReadiness: finalReport.overallScore, score: finalReport.overallScore })
-          }).catch(e => console.warn('Failed to update student score:', e));
+          }).catch(() => {});
         }
       }
 
       this.setStorage(`interview_${sessionId}`, sess);
-
-      return {
-        isCompleted,
-        turnEvaluation,
-        nextQuestion,
-        finalReport
-      };
+      return { isCompleted, turnEvaluation, nextQuestion, finalReport };
     },
 
     finalize: async (sessionId: string): Promise<DiagnosticReport | null> => {
       const sess = this.getStorage<any>(`interview_${sessionId}`, null);
       if (!sess) return null;
+      if (sess.finalReport) return sess.finalReport;
       const student = await this.student.getProfile();
       return synthesizeDynamicReport(sess.type || 'MOCK_INTERVIEW', sess.questions || [], student, sess.tabSwitches || 0);
     },

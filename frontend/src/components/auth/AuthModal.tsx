@@ -172,9 +172,8 @@ export const AuthModal: React.FC = () => {
     setLoading(true);
     try {
       const res = await api.auth.requestPasswordReset(forgotEmail.trim());
-      setSimulatedOtp(res.otp);
       setForgotStep('VERIFY_AND_RESET');
-      setSuccessMsg(`Verification code generated for ${res.email}.`);
+      setSuccessMsg(res.message || `A 6-digit verification code has been dispatched to ${res.email}.`);
     } catch (err: any) {
       setError(err?.message || 'Failed to request password reset code.');
     } finally {
@@ -185,7 +184,7 @@ export const AuthModal: React.FC = () => {
   const handleResetPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!forgotOtp.trim()) {
-      setError('Please enter the 6-digit verification code.');
+      setError('Please enter the 6-digit verification code sent to your email.');
       return;
     }
     if (!forgotNewPassword || forgotNewPassword.length < 6) {
@@ -204,11 +203,14 @@ export const AuthModal: React.FC = () => {
         otp: forgotOtp.trim(),
         newPassword: forgotNewPassword
       });
-      setSuccessMsg('Password updated successfully! Logging you in...');
+      setSuccessMsg(res.message || 'Password updated successfully! Please sign in with your new password.');
       setTimeout(() => {
-        loginWithAuthUser(res.user, res.token);
-        closeAuthModal();
-      }, 700);
+        setActiveTab('LOGIN');
+        setEmail(forgotEmail.trim());
+        setPassword('');
+        setError(null);
+        setForgotStep('REQUEST_OTP');
+      }, 1500);
     } catch (err: any) {
       setError(err?.message || 'Failed to reset password. Please check your verification code.');
     } finally {
@@ -555,14 +557,12 @@ export const AuthModal: React.FC = () => {
                 </form>
               ) : (
                 <form onSubmit={handleResetPasswordSubmit} className="space-y-3.5">
-                  {simulatedOtp && (
-                    <div className="p-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs text-neutral-800 flex items-center justify-between">
-                      <span className="font-medium text-[11px] text-neutral-600">Verification Code:</span>
-                      <span className="font-mono text-xs font-bold bg-neutral-200 text-neutral-900 px-2 py-0.5 rounded">
-                        {simulatedOtp}
-                      </span>
-                    </div>
-                  )}
+                  <div className="p-3 bg-blue-50/80 border border-blue-200/80 rounded-xl text-xs text-blue-900 flex items-center justify-between">
+                    <span className="font-medium text-[11px] text-blue-700">Verification code sent to:</span>
+                    <span className="font-mono text-xs font-semibold text-blue-950 px-2 py-0.5 bg-blue-100 rounded">
+                      {forgotEmail}
+                    </span>
+                  </div>
 
                   <div>
                     <label className="block text-xs font-medium text-neutral-700 mb-1">Email</label>

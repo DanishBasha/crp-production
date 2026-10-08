@@ -89,7 +89,26 @@ ownerRouter.post('/colleges', async (req: Request, res: Response): Promise<void>
       [name, code, campusCity]
     );
 
-    sendSuccess(res, rows[0], 201);
+    const inst = rows[0];
+
+    // Seed foundational departments
+    await db.query(`
+      INSERT INTO org.departments (institution_id, name, code, is_active)
+      VALUES 
+        ($1, 'Computer Science & Engineering', 'CSE', true),
+        ($1, 'Information Technology', 'IT', true),
+        ($1, 'Electronics & Communication Engineering', 'ECE', true)
+      ON CONFLICT DO NOTHING
+    `, [inst.id]).catch(() => {});
+
+    // Seed foundational program
+    await db.query(`
+      INSERT INTO org.programs (institution_id, name, code, target_department, admin_permissions)
+      VALUES ($1, 'B.Tech Computer Science & Engineering', 'BTECH-CSE', 'Computer Science & Engineering', '["CAN_VIEW_STUDENT_PROGRESS", "CAN_ASSIGN_INTERVIEWS", "CAN_MANAGE_STUDENTS"]'::jsonb)
+      ON CONFLICT DO NOTHING
+    `, [inst.id]).catch(() => {});
+
+    sendSuccess(res, inst, 201);
   } catch (err) {
     sendError(res, err);
   }
@@ -222,38 +241,84 @@ ownerRouter.get('/stats', async (_req: Request, res: Response): Promise<void> =>
 ownerRouter.delete(
   '/colleges/:collegeId',
   async (req: Request, res: Response): Promise<void> => {
+    const client = await db.connect();
     try {
       const { collegeId } = req.params;
 
-      // Check for existing students
-      const { rows: studentCheck } = await db.query(
-        `SELECT COUNT(*) AS count FROM org.students s
-         JOIN org.batches b ON b.id = s.batch_id
-         JOIN org.programs p ON p.id = b.program_id
-         WHERE p.institution_id = $1`,
+      const { rows: instRows } = await client.query(
+        `SELECT id, name FROM org.institutions WHERE id = $1`,
         [collegeId]
       );
-
-      if (parseInt(studentCheck[0].count) > 0) {
-        throw new AppError(
-          409,
-          'Cannot delete institution with enrolled students',
-          'INSTITUTION_HAS_STUDENTS'
-        );
-      }
-
-      const { rowCount } = await db.query(
-        `DELETE FROM org.institutions WHERE id = $1`,
-        [collegeId]
-      );
-
-      if (rowCount === 0) {
+      if (instRows.length === 0) {
         throw new AppError(404, 'Institution not found', 'NOT_FOUND');
       }
 
-      sendSuccess(res, { message: 'Institution deleted successfully' });
+      await client.query('BEGIN');
+
+      // 1. Identify all admin/staff user IDs tied to this institution (never delete PLATFORM_OWNER)
+      const { rows: adminUsers } = await client.query<{ id: string }>(
+        `SELECT DISTINCT u.id FROM identity.users u
+         LEFT JOIN identity.role_assignments ra ON ra.user_id = u.id
+         WHERE (u.institution_id = $1 OR ra.institution_id = $1)
+           AND u.role != 'PLATFORM_OWNER'`,
+        [collegeId]
+      );
+      const userIdsToDelete = adminUsers.map(u => u.id);
+
+      // 2. Delete pending invites for this institution
+      await client.query(`DELETE FROM identity.pending_invites WHERE institution_id = $1`, [collegeId]).catch(() => {});
+
+      // 3. Delete role assignments for this institution or these users
+      await client.query(
+        `DELETE FROM identity.role_assignments WHERE institution_id = $1 OR user_id = ANY($2::uuid[])`,
+        [collegeId, userIdsToDelete]
+      ).catch(() => {});
+
+      // 4. Delete assignments & trainer tenures
+      await client.query(`DELETE FROM org.interview_assignments WHERE institution_id = $1`, [collegeId]).catch(() => {});
+      await client.query(`DELETE FROM org.trainer_tenures WHERE institution_id = $1`, [collegeId]).catch(() => {});
+
+      // 5. Delete department classes & staff & departments
+      await client.query(`DELETE FROM org.department_classes WHERE institution_id = $1`, [collegeId]).catch(() => {});
+      await client.query(`DELETE FROM org.department_staff WHERE institution_id = $1`, [collegeId]).catch(() => {});
+      await client.query(`DELETE FROM org.departments WHERE institution_id = $1`, [collegeId]).catch(() => {});
+
+      // 6. Delete students & batches & programs
+      await client.query(
+        `DELETE FROM org.students
+         WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $1)
+            OR batch_id IN (SELECT b.id FROM org.batches b JOIN org.programs p ON p.id = b.program_id WHERE p.institution_id = $1)
+            OR user_id = ANY($2::uuid[])`,
+        [collegeId, userIdsToDelete]
+      ).catch(() => {});
+
+      await client.query(
+        `DELETE FROM org.batches
+         WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $1)`,
+        [collegeId]
+      ).catch(() => {});
+
+      await client.query(`DELETE FROM org.programs WHERE institution_id = $1`, [collegeId]).catch(() => {});
+
+      // 7. Delete corresponding admin / staff users from identity.users
+      if (userIdsToDelete.length > 0) {
+        await client.query(`DELETE FROM identity.users WHERE id = ANY($1::uuid[]) AND role != 'PLATFORM_OWNER'`, [userIdsToDelete]).catch(() => {});
+      }
+
+      // 8. Delete the institution itself
+      await client.query(`DELETE FROM org.institutions WHERE id = $1`, [collegeId]);
+
+      await client.query('COMMIT');
+
+      sendSuccess(res, {
+        message: 'Institution and all corresponding administrators/data removed successfully',
+        removedAdminsCount: userIdsToDelete.length
+      });
     } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
       sendError(res, err);
+    } finally {
+      client.release();
     }
   }
 );

@@ -11,6 +11,7 @@ import { eventBus } from '../shared/events/eventBus';
 import { Events, UserRegisteredPayload } from '../shared/events/events';
 import { UserRole } from '../shared/types/roles';
 import { AuthUser } from '../shared/types/auth';
+import { sendPasswordResetOtpEmail } from '../services/emailService';
 
 export const authRouter = Router();
 
@@ -341,6 +342,23 @@ authRouter.post('/register-institution', async (req: Request, res: Response): Pr
       [instRow.id, adminName, adminEmail]
     ).catch(() => {});
 
+    // 6. Seed foundational departments
+    await client.query(`
+      INSERT INTO org.departments (institution_id, name, code, is_active)
+      VALUES 
+        ($1, 'Computer Science & Engineering', 'CSE', true),
+        ($1, 'Information Technology', 'IT', true),
+        ($1, 'Electronics & Communication Engineering', 'ECE', true)
+      ON CONFLICT DO NOTHING
+    `, [instRow.id]).catch(() => {});
+
+    // 7. Seed foundational program
+    await client.query(`
+      INSERT INTO org.programs (institution_id, name, code, target_department, admin_permissions)
+      VALUES ($1, 'B.Tech Computer Science & Engineering', 'BTECH-CSE', 'Computer Science & Engineering', '["CAN_VIEW_STUDENT_PROGRESS", "CAN_ASSIGN_INTERVIEWS", "CAN_MANAGE_STUDENTS"]'::jsonb)
+      ON CONFLICT DO NOTHING
+    `, [instRow.id]).catch(() => {});
+
     await client.query('COMMIT');
 
     const authUser: AuthUser = {
@@ -532,3 +550,121 @@ authRouter.get('/me', authenticate, async (req: AuthRequest, res: Response): Pro
     sendError(res, err);
   }
 });
+
+// ── POST /api/auth/forgot-password ─────────────────────────────────────────────
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email().transform(s => s.toLowerCase().trim()),
+});
+
+authRouter.post(
+  ['/forgot-password', '/request-password-reset'],
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const parsed = forgotPasswordSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new AppError(422, 'Valid email address is required', 'VALIDATION_ERROR');
+      }
+      const { email } = parsed.data;
+
+      const { rows } = await db.query<{ id: string; name: string; email: string }>(
+        `SELECT id, name, email FROM identity.users WHERE lower(email) = $1 LIMIT 1`,
+        [email]
+      );
+      if (rows.length === 0) {
+        throw new AppError(404, 'No account found with this email address.', 'USER_NOT_FOUND');
+      }
+      const user = rows[0];
+
+      // Generate secure 6-digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
+      // Invalidate previous active OTPs for this email
+      await db.query(
+        `UPDATE identity.password_resets SET used = true WHERE email = $1 AND used = false`,
+        [email]
+      );
+
+      // Insert new OTP
+      await db.query(
+        `INSERT INTO identity.password_resets (email, otp, expires_at, used)
+         VALUES ($1, $2, $3, false)`,
+        [email, otp, expiresAt]
+      );
+
+      // Send real email via SMTP / Gmail / Resend
+      await sendPasswordResetOtpEmail({
+        to: user.email,
+        name: user.name,
+        otp,
+        expiresInMinutes: 15,
+      });
+
+      sendSuccess(res, {
+        success: true,
+        message: `A 6-digit verification code has been sent to ${user.email}.`,
+        email: user.email,
+      });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── POST /api/auth/reset-password ──────────────────────────────────────────────
+
+const resetPasswordSchema = z.object({
+  email: z.string().email().transform(s => s.toLowerCase().trim()),
+  otp: z.string().min(4).max(10).transform(s => s.trim()),
+  newPassword: z.string().min(6, 'Password must be at least 6 characters'),
+});
+
+authRouter.post(
+  ['/reset-password', '/verify-reset-password'],
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const parsed = resetPasswordSchema.safeParse(req.body);
+      if (!parsed.success) {
+        const detail = parsed.error.issues.map(i => i.message).join(', ');
+        throw new AppError(422, `Validation failed: ${detail}`, 'VALIDATION_ERROR');
+      }
+      const { email, otp, newPassword } = parsed.data;
+
+      // Verify OTP
+      const { rows } = await db.query<{ id: string; expires_at: Date }>(
+        `SELECT id, expires_at FROM identity.password_resets
+         WHERE email = $1 AND otp = $2 AND used = false AND expires_at > now()
+         ORDER BY created_at DESC LIMIT 1`,
+        [email, otp]
+      );
+
+      if (rows.length === 0) {
+        throw new AppError(400, 'Invalid or expired verification code. Please request a new one.', 'INVALID_OTP');
+      }
+
+      // Mark OTP as used
+      await db.query(`UPDATE identity.password_resets SET used = true WHERE id = $1`, [rows[0].id]);
+
+      // Hash new password and update user
+      const passwordHash = await bcrypt.hash(newPassword, 10);
+      const { rowCount } = await db.query(
+        `UPDATE identity.users
+         SET password_hash = $1, token_version = token_version + 1, updated_at = now()
+         WHERE lower(email) = $2`,
+        [passwordHash, email]
+      );
+
+      if (rowCount === 0) {
+        throw new AppError(404, 'User account not found', 'USER_NOT_FOUND');
+      }
+
+      sendSuccess(res, {
+        success: true,
+        message: 'Password has been reset successfully. You can now sign in with your new password.',
+      });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);

@@ -91,3 +91,16 @@ CREATE TABLE IF NOT EXISTS org.trainer_tenures (
 );
 
 CREATE INDEX IF NOT EXISTS idx_trainer_tenures_inst ON org.trainer_tenures(institution_id);
+
+-- 7. Password resets table
+CREATE TABLE IF NOT EXISTS identity.password_resets (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email                   VARCHAR(255) NOT NULL,
+  otp                     VARCHAR(10) NOT NULL,
+  expires_at              TIMESTAMPTZ NOT NULL,
+  used                    BOOLEAN NOT NULL DEFAULT false,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_resets_email ON identity.password_resets(email, used);
+

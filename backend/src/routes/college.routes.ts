@@ -232,21 +232,94 @@ collegeRouter.delete(
   '/:collegeId/departments/:deptId',
   requireSuperAdminOrOwner,
   async (req: Request, res: Response): Promise<void> => {
+    const client = await db.connect();
     try {
-      const { deptId } = req.params;
+      const { collegeId, deptId } = req.params;
+      const resolvedCollegeId = await resolveCollegeId(collegeId);
 
-      const { rowCount } = await db.query(
-        `DELETE FROM org.departments WHERE id = $1`,
+      const { rows: deptRows } = await client.query(
+        `SELECT id, institution_id, name, code FROM org.departments WHERE id = $1`,
         [deptId]
       );
 
-      if (rowCount === 0) {
+      if (deptRows.length === 0) {
         throw new AppError(404, 'Department not found', 'NOT_FOUND');
       }
+      const dept = deptRows[0];
 
-      sendSuccess(res, { success: true });
+      await client.query('BEGIN');
+
+      // 1. Identify all staff & department admin user IDs to cascade delete
+      const { rows: staffUsers } = await client.query<{ id: string; email: string }>(
+        `SELECT DISTINCT u.id, u.email FROM identity.users u
+         LEFT JOIN org.department_staff ds ON ds.user_id = u.id OR LOWER(ds.email) = LOWER(u.email)
+         LEFT JOIN identity.role_assignments ra ON ra.user_id = u.id
+         WHERE (
+           ds.department_id = $1 
+           OR (ds.institution_id = $2 AND LOWER(ds.department) = LOWER($3))
+           OR (ra.institution_id = $2 AND u.role = 'DEPARTMENT_ADMIN')
+         )
+         AND u.role NOT IN ('PLATFORM_OWNER', 'SUPER_ADMIN')`,
+        [deptId, resolvedCollegeId, dept.name]
+      );
+      const userIdsToDelete = staffUsers.map(u => u.id);
+      const emailsToDelete = staffUsers.map(u => u.email.toLowerCase());
+
+      // 2. Delete pending invites for this department/staff
+      if (emailsToDelete.length > 0) {
+        await client.query(
+          `DELETE FROM identity.pending_invites 
+           WHERE institution_id = $1 AND LOWER(email) = ANY($2::text[])`,
+          [resolvedCollegeId, emailsToDelete]
+        ).catch(() => {});
+      }
+
+      // 3. Delete role assignments
+      if (userIdsToDelete.length > 0) {
+        await client.query(
+          `DELETE FROM identity.role_assignments WHERE user_id = ANY($1::uuid[])`,
+          [userIdsToDelete]
+        ).catch(() => {});
+      }
+
+      // 4. Delete department classes
+      await client.query(
+        `DELETE FROM org.department_classes 
+         WHERE department_id = $1 OR (institution_id = $2 AND LOWER(department) = LOWER($3))`,
+        [deptId, resolvedCollegeId, dept.name]
+      ).catch(() => {});
+
+      // 5. Delete department staff
+      await client.query(
+        `DELETE FROM org.department_staff 
+         WHERE department_id = $1 OR (institution_id = $2 AND LOWER(department) = LOWER($3))`,
+        [deptId, resolvedCollegeId, dept.name]
+      ).catch(() => {});
+
+      // 6. Delete users from identity.users
+      if (userIdsToDelete.length > 0) {
+        await client.query(
+          `DELETE FROM identity.users 
+           WHERE id = ANY($1::uuid[]) AND role NOT IN ('PLATFORM_OWNER', 'SUPER_ADMIN')`,
+          [userIdsToDelete]
+        ).catch(() => {});
+      }
+
+      // 7. Delete the department
+      await client.query(`DELETE FROM org.departments WHERE id = $1`, [deptId]);
+
+      await client.query('COMMIT');
+
+      sendSuccess(res, {
+        success: true,
+        message: 'Department and associated administrators/staff removed successfully',
+        deletedAdminsCount: userIdsToDelete.length
+      });
     } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
       sendError(res, err);
+    } finally {
+      client.release();
     }
   }
 );
@@ -392,7 +465,38 @@ collegeRouter.post(
         ]
       );
 
-      sendSuccess(res, rows[0], 201);
+      const program = rows[0];
+
+      // If program admin email provided, create user and role assignment
+      if (assignedAdminEmail) {
+        const passwordHash = await bcrypt.hash('welcome@2026', 10);
+        const { rows: userRows } = await db.query(
+          `INSERT INTO identity.users (name, email, password_hash, role, status)
+           VALUES ($1, $2, $3, 'PROGRAM_ADMIN', 'ACTIVE')
+           ON CONFLICT (email) DO UPDATE SET role = 'PROGRAM_ADMIN'
+           RETURNING id`,
+          [assignedAdminName || name + ' Admin', assignedAdminEmail, passwordHash]
+        );
+
+        if (userRows[0]) {
+          await db.query(
+            `INSERT INTO identity.role_assignments (user_id, role_id, institution_id, program_id, scope_type, is_active)
+             SELECT $1, id, $2, $3, 'PROGRAM', true FROM identity.roles WHERE name = 'PROGRAM_ADMIN'
+             ON CONFLICT DO NOTHING`,
+            [userRows[0].id, collegeId, program.id]
+          ).catch(() => {});
+        }
+
+        sendStaffWelcomeEmail({
+          to: assignedAdminEmail,
+          name: assignedAdminName || `${name} Admin`,
+          role: 'PROGRAM_ADMIN',
+          password: 'welcome@2026',
+          createdBy: (req as AuthRequest).user?.name || 'Administrator',
+        }).catch((err) => console.error('[college.routes] Failed to send program admin welcome email:', err));
+      }
+
+      sendSuccess(res, program, 201);
     } catch (err) {
       sendError(res, err);
     }
@@ -472,12 +576,92 @@ collegeRouter.delete(
   '/:collegeId/programs/:progId',
   requireSuperAdminOrOwner,
   async (req: Request, res: Response): Promise<void> => {
+    const client = await db.connect();
     try {
-      const { progId } = req.params;
-      await db.query(`DELETE FROM org.programs WHERE id = $1`, [progId]);
-      sendSuccess(res, { success: true });
+      const { collegeId, progId } = req.params;
+      const resolvedCollegeId = await resolveCollegeId(collegeId);
+
+      const { rows: progRows } = await client.query(
+        `SELECT id, institution_id, name, code, assigned_admin_email FROM org.programs WHERE id = $1`,
+        [progId]
+      );
+      if (progRows.length === 0) {
+        throw new AppError(404, 'Program not found', 'NOT_FOUND');
+      }
+      const program = progRows[0];
+
+      await client.query('BEGIN');
+
+      // 1. Identify program admin user IDs to cascade delete
+      const { rows: adminUsers } = await client.query<{ id: string; email: string }>(
+        `SELECT DISTINCT u.id, u.email FROM identity.users u
+         LEFT JOIN identity.role_assignments ra ON ra.user_id = u.id
+         WHERE (
+           ra.program_id = $1
+           OR ($2::text IS NOT NULL AND LOWER(u.email) = LOWER($2::text))
+           OR (u.role = 'PROGRAM_ADMIN' AND ra.institution_id = $3)
+         )
+         AND u.role NOT IN ('PLATFORM_OWNER', 'SUPER_ADMIN')`,
+        [progId, program.assigned_admin_email, resolvedCollegeId]
+      );
+      const userIdsToDelete = adminUsers.map(u => u.id);
+      const emailsToDelete = adminUsers.map(u => u.email.toLowerCase());
+      if (program.assigned_admin_email) {
+        emailsToDelete.push(program.assigned_admin_email.toLowerCase());
+      }
+
+      // 2. Delete pending invites
+      if (emailsToDelete.length > 0) {
+        await client.query(
+          `DELETE FROM identity.pending_invites 
+           WHERE program_id = $1 OR LOWER(email) = ANY($2::text[])`,
+          [progId, emailsToDelete]
+        ).catch(() => {});
+      } else {
+        await client.query(`DELETE FROM identity.pending_invites WHERE program_id = $1`, [progId]).catch(() => {});
+      }
+
+      // 3. Delete role assignments
+      if (userIdsToDelete.length > 0) {
+        await client.query(
+          `DELETE FROM identity.role_assignments WHERE program_id = $1 OR user_id = ANY($2::uuid[])`,
+          [progId, userIdsToDelete]
+        ).catch(() => {});
+      } else {
+        await client.query(`DELETE FROM identity.role_assignments WHERE program_id = $1`, [progId]).catch(() => {});
+      }
+
+      // 4. Delete interview assignments for this program
+      await client.query(`DELETE FROM org.interview_assignments WHERE program_id = $1`, [progId]).catch(() => {});
+
+      // 5. Unlink students and delete batches
+      await client.query(`UPDATE org.students SET batch_id = NULL, program_id = NULL WHERE program_id = $1`, [progId]).catch(() => {});
+      await client.query(`DELETE FROM org.batches WHERE program_id = $1`, [progId]).catch(() => {});
+
+      // 6. Delete users from identity.users
+      if (userIdsToDelete.length > 0) {
+        await client.query(
+          `DELETE FROM identity.users 
+           WHERE id = ANY($1::uuid[]) AND role NOT IN ('PLATFORM_OWNER', 'SUPER_ADMIN')`,
+          [userIdsToDelete]
+        ).catch(() => {});
+      }
+
+      // 7. Delete the program
+      await client.query(`DELETE FROM org.programs WHERE id = $1`, [progId]);
+
+      await client.query('COMMIT');
+
+      sendSuccess(res, {
+        success: true,
+        message: 'Program and associated administrator removed successfully',
+        deletedAdminsCount: userIdsToDelete.length
+      });
     } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
       sendError(res, err);
+    } finally {
+      client.release();
     }
   }
 );
@@ -673,21 +857,42 @@ collegeRouter.delete(
   '/:collegeId/staff/:staffId',
   requireSuperAdminOrOwner,
   async (req: Request, res: Response): Promise<void> => {
+    const client = await db.connect();
     try {
       const { staffId } = req.params;
 
-      const { rowCount } = await db.query(
-        `DELETE FROM org.department_staff WHERE id = $1`,
+      const { rows: staffRows } = await client.query(
+        `SELECT id, user_id, email FROM org.department_staff WHERE id = $1`,
         [staffId]
       );
-
-      if (rowCount === 0) {
+      if (staffRows.length === 0) {
         throw new AppError(404, 'Staff member not found', 'NOT_FOUND');
       }
+      const staff = staffRows[0];
 
-      sendSuccess(res, { success: true });
+      await client.query('BEGIN');
+
+      if (staff.user_id) {
+        await client.query(`DELETE FROM identity.role_assignments WHERE user_id = $1`, [staff.user_id]).catch(() => {});
+        await client.query(`DELETE FROM identity.users WHERE id = $1 AND role NOT IN ('PLATFORM_OWNER', 'SUPER_ADMIN')`, [staff.user_id]).catch(() => {});
+      } else if (staff.email) {
+        await client.query(`DELETE FROM identity.users WHERE LOWER(email) = LOWER($1) AND role NOT IN ('PLATFORM_OWNER', 'SUPER_ADMIN')`, [staff.email]).catch(() => {});
+      }
+
+      if (staff.email) {
+        await client.query(`DELETE FROM identity.pending_invites WHERE LOWER(email) = LOWER($1)`, [staff.email]).catch(() => {});
+      }
+
+      await client.query(`DELETE FROM org.department_staff WHERE id = $1`, [staffId]);
+
+      await client.query('COMMIT');
+
+      sendSuccess(res, { success: true, message: 'Staff member and user account removed successfully' });
     } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
       sendError(res, err);
+    } finally {
+      client.release();
     }
   }
 );

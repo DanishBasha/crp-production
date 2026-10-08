@@ -48,6 +48,7 @@ router.use('/invites', invitesRouter);
 
 // Protected — authenticate on every request; individual routes add authorize() as needed
 router.use('/students', authenticate, studentRouter);
+router.use('/interview', authenticate, interviewRouter);
 router.use('/sessions', authenticate, interviewRouter);
 router.use('/sessions', authenticate, sessionsRouter);
 router.use('/portals', authenticate, portalRouter);

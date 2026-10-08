@@ -209,3 +209,55 @@ export async function sendInviteEmail(opts: InviteEmailOptions): Promise<void> {
 
   await dispatchEmail(opts.to, `Invitation: Join ${env.APP_NAME} as ${roleName}`, html);
 }
+
+export interface PasswordResetEmailOptions {
+  to: string;
+  name: string;
+  otp: string;
+  expiresInMinutes?: number;
+}
+
+export async function sendPasswordResetOtpEmail(opts: PasswordResetEmailOptions): Promise<void> {
+  const expiry = opts.expiresInMinutes || 15;
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f9fafb; margin: 0; padding: 32px 16px;">
+  <div style="max-width: 520px; margin: 0 auto; background: white; border-radius: 12px; border: 1px solid #e5e7eb; padding: 40px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+    <div style="margin-bottom: 24px;">
+      <h1 style="font-size: 22px; font-weight: 700; color: #111827; margin: 0 0 6px">${env.APP_NAME}</h1>
+      <p style="color: #6b7280; margin: 0; font-size: 14px;">Password Reset Verification Code</p>
+    </div>
+
+    <p style="color: #374151; font-size: 15px; line-height: 1.6;">Hi <strong>${opts.name}</strong>,</p>
+    <p style="color: #374151; font-size: 15px; line-height: 1.6;">
+      We received a request to reset your password for ${env.APP_NAME}. Please enter the following 6-digit verification code:
+    </p>
+
+    <div style="text-align: center; margin: 32px 0;">
+      <div style="display: inline-block; background: #eff6ff; border: 2px dashed #3b82f6; border-radius: 12px; padding: 18px 36px;">
+        <span style="font-family: monospace; font-size: 34px; font-weight: 700; letter-spacing: 10px; color: #1d4ed8;">${opts.otp}</span>
+      </div>
+    </div>
+
+    <p style="color: #4b5563; font-size: 14px; text-align: center; margin-bottom: 24px;">
+      This verification code is valid for <strong>${expiry} minutes</strong>.
+    </p>
+
+    <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 16px; margin-bottom: 24px;">
+      <p style="margin: 0; font-size: 13px; color: #92400e;">
+        If you did not request a password reset, you can safely ignore this email. Your account remains secure.
+      </p>
+    </div>
+
+    <p style="color: #9ca3af; font-size: 12px; margin: 24px 0 0; border-top: 1px solid #f3f4f6; padding-top: 16px;">
+      This automated security notification was sent by ${env.APP_NAME}.
+    </p>
+  </div>
+</body>
+</html>`;
+
+  await dispatchEmail(opts.to, `Your ${env.APP_NAME} Password Reset Code: ${opts.otp}`, html);
+}
+
