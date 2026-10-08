@@ -277,6 +277,85 @@ ownerRouter.get('/stats', async (_req: Request, res: Response): Promise<void> =>
   }
 });
 
+// ── GET /api/owner/colleges/:collegeId/metrics ───────────────────────────
+ownerRouter.get('/colleges/:collegeId/metrics', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawCollegeId = Array.isArray(req.params.collegeId) ? req.params.collegeId[0] : (req.params.collegeId || '');
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawCollegeId);
+    let instRows: any[] = [];
+    if (isUuid) {
+      const { rows } = await db.query(
+        `SELECT id, name, code, type AS campus_city, created_at FROM org.institutions WHERE id = $1`,
+        [rawCollegeId]
+      );
+      instRows = rows;
+    }
+    if (instRows.length === 0) {
+      const { rows } = await db.query(
+        `SELECT id, name, code, type AS campus_city, created_at FROM org.institutions WHERE UPPER(code) = UPPER($1) OR LOWER(name) = LOWER($1)`,
+        [rawCollegeId]
+      );
+      instRows = rows;
+    }
+    if (instRows.length === 0) {
+      throw new AppError(404, 'Institution not found', 'NOT_FOUND');
+    }
+    const college = instRows[0];
+    const collegeId = college.id;
+
+    // Count enrolled students strictly and specifically for THIS college
+    const { rows: studentCountRows } = await db.query(
+      `SELECT COUNT(DISTINCT s.id) AS count
+       FROM org.students s
+       LEFT JOIN org.programs p ON p.id = s.program_id
+       LEFT JOIN org.batches b ON b.id = s.batch_id
+       LEFT JOIN org.programs pb ON pb.id = b.program_id
+       LEFT JOIN identity.users u ON u.id = s.user_id
+       WHERE p.institution_id = $1 OR pb.institution_id = $1 OR u.institution_id = $1`,
+      [collegeId]
+    );
+    const enrolledStudentsCount = parseInt(studentCountRows[0]?.count || '0', 10);
+
+    // Get programs created for this college
+    const { rows: progRows } = await db.query(
+      `SELECT id, name, code, is_active FROM org.programs WHERE institution_id = $1 ORDER BY created_at DESC`,
+      [collegeId]
+    );
+
+    // Get assignments count for this college
+    const { rows: assignCountRows } = await db.query(
+      `SELECT COUNT(*) AS count FROM org.interview_assignments WHERE institution_id = $1`,
+      [collegeId]
+    ).catch(() => ({ rows: [{ count: '0' }] }));
+    const totalAssignmentsCount = parseInt(assignCountRows[0]?.count || '0', 10);
+
+    sendSuccess(res, {
+      college: {
+        id: college.id,
+        name: college.name,
+        code: college.code,
+        campusCity: college.campus_city || '',
+        createdAt: college.created_at
+      },
+      enrolledStudentsCount,
+      programsCreated: progRows,
+      programsCount: progRows.length,
+      totalAssignmentsCount,
+      tokenUsage: {
+        totalTokens: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        audioMinutes: 0,
+        whisperHours: 0,
+        llmModel: 'Gemini 1.5 Flash + Whisper Pro',
+        status: 'Active (0 Tokens Consumed)'
+      }
+    });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 // ── DELETE /api/owner/colleges/:collegeId ───────────────────────────────────
 ownerRouter.delete(
   '/colleges/:collegeId',

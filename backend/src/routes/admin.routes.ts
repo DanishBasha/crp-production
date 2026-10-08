@@ -522,7 +522,8 @@ adminRouter.get(
             WHEN COALESCE(s.overall_readiness, 0) >= 65 THEN 'ON_TRACK'
             ELSE 'NEEDS_ATTENTION'
           END AS status,
-          s.created_at AS "createdAt"
+          s.created_at AS "createdAt",
+          COALESCE(u.institution_id, p.institution_id, pb.institution_id) AS "collegeId"
         FROM org.students s
         JOIN identity.users u ON u.id = s.user_id
         LEFT JOIN org.programs p ON p.id = s.program_id

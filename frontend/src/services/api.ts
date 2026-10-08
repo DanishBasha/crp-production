@@ -852,14 +852,21 @@ class ApiClient {
     },
 
     getCollegeProfileMetrics: async (collegeId: string) => {
+      try {
+        const res = await this._fetch<{ data: any }>(`/owner/colleges/${encodeURIComponent(collegeId)}/metrics`);
+        if (res && res.data) {
+          return res.data;
+        }
+      } catch {}
+
       const colleges = await this.owner.getColleges();
       const college = colleges.find(c => c.id === collegeId) || colleges[0] || { id: collegeId, name: 'College', code: 'COL', campusCity: '', createdAt: new Date().toISOString() };
       let enrolledCount = 0;
       let progs: DynamicProgram[] = [];
       let assignmentsCount = 0;
       try {
-        const students = await this.admin.getStudents();
-        enrolledCount = students.filter((s: any) => !s.collegeId || s.collegeId === collegeId).length;
+        const students = await this.admin.getStudents({ collegeId });
+        enrolledCount = students.filter((s: any) => s.collegeId === collegeId).length;
       } catch {}
       try {
         progs = await this.college.getPrograms(collegeId);
