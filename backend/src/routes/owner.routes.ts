@@ -251,7 +251,22 @@ ownerRouter.get('/stats', async (_req: Request, res: Response): Promise<void> =>
     const { rows: stats } = await db.query(`
       SELECT
         (SELECT COUNT(*) FROM org.institutions) AS total_colleges,
-        (SELECT COUNT(*) FROM identity.users WHERE role = 'SUPER_ADMIN' AND status = 'ACTIVE') AS active_super_admins,
+        (
+          SELECT COUNT(DISTINCT i.id)
+          FROM org.institutions i
+          WHERE EXISTS (
+            SELECT 1 FROM identity.users u
+            LEFT JOIN identity.role_assignments ra ON ra.user_id = u.id
+            WHERE (u.institution_id = i.id OR ra.institution_id = i.id)
+              AND (u.role = 'SUPER_ADMIN' OR ra.role_id = '119e7528-6954-471b-8804-3a03ca035aa1')
+              AND u.status = 'ACTIVE'
+          ) OR EXISTS (
+            SELECT 1 FROM identity.pending_invites inv
+            WHERE inv.institution_id = i.id
+              AND inv.role = 'SUPER_ADMIN'
+              AND inv.status = 'ACCEPTED'
+          )
+        ) AS active_super_admins,
         (SELECT COUNT(*) FROM org.students) AS total_students,
         (SELECT COUNT(*) FROM org.programs) AS total_programs
     `);

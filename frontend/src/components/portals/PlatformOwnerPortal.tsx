@@ -92,9 +92,10 @@ export const PlatformOwnerPortal: React.FC = () => {
         api.invites.getAll()
       ]);
       setColleges(colList);
+      const activeFromList = colList.filter(c => c.superAdminStatus === 'ACTIVE').length;
       setStats({
         totalColleges: colList.length,
-        activeSuperAdmins: st.activeSuperAdmins,
+        activeSuperAdmins: activeFromList > 0 ? activeFromList : (st.activeSuperAdmins ?? 0),
         totalStudents: st.totalStudents
       });
       setPendingInvites(invList.filter(inv => inv.role === 'SUPER_ADMIN'));

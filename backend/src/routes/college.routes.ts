@@ -141,9 +141,9 @@ collegeRouter.post(
           `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
            VALUES ($1, $2, $3, 'DEPARTMENT_ADMIN', 'ACTIVE', $4)
            ON CONFLICT (email) DO UPDATE SET 
-             role = 'DEPARTMENT_ADMIN',
-             name = EXCLUDED.name,
-             institution_id = EXCLUDED.institution_id
+             role = CASE WHEN identity.users.role IN ('PLATFORM_OWNER', 'SUPER_ADMIN') THEN identity.users.role ELSE 'DEPARTMENT_ADMIN' END,
+             name = COALESCE(identity.users.name, EXCLUDED.name),
+             institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
            RETURNING id`,
           [assignedAdminName || name + ' Admin', assignedAdminEmail.toLowerCase().trim(), passwordHash, collegeId]
         );
@@ -241,9 +241,9 @@ collegeRouter.patch(
           `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
            VALUES ($1, $2, $3, 'DEPARTMENT_ADMIN', 'ACTIVE', $4)
            ON CONFLICT (email) DO UPDATE SET 
-             role = 'DEPARTMENT_ADMIN',
-             name = EXCLUDED.name,
-             institution_id = EXCLUDED.institution_id
+             role = CASE WHEN identity.users.role IN ('PLATFORM_OWNER', 'SUPER_ADMIN') THEN identity.users.role ELSE 'DEPARTMENT_ADMIN' END,
+             name = COALESCE(identity.users.name, EXCLUDED.name),
+             institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
            RETURNING id`,
           [adminName, adminEmail, passwordHash, resolvedCollegeId]
         );
@@ -550,9 +550,9 @@ collegeRouter.post(
           `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
            VALUES ($1, $2, $3, 'PROGRAM_ADMIN', 'ACTIVE', $4)
            ON CONFLICT (email) DO UPDATE SET 
-             role = 'PROGRAM_ADMIN',
-             name = EXCLUDED.name,
-             institution_id = EXCLUDED.institution_id
+             role = CASE WHEN identity.users.role IN ('PLATFORM_OWNER', 'SUPER_ADMIN') THEN identity.users.role ELSE 'PROGRAM_ADMIN' END,
+             name = COALESCE(identity.users.name, EXCLUDED.name),
+             institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
            RETURNING id`,
           [assignedAdminName || name + ' Admin', assignedAdminEmail.toLowerCase().trim(), passwordHash, collegeId]
         );
@@ -635,9 +635,9 @@ collegeRouter.patch(
           `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
            VALUES ($1, $2, $3, 'PROGRAM_ADMIN', 'ACTIVE', $4)
            ON CONFLICT (email) DO UPDATE SET 
-             role = 'PROGRAM_ADMIN',
-             name = EXCLUDED.name,
-             institution_id = EXCLUDED.institution_id
+             role = CASE WHEN identity.users.role IN ('PLATFORM_OWNER', 'SUPER_ADMIN') THEN identity.users.role ELSE 'PROGRAM_ADMIN' END,
+             name = COALESCE(identity.users.name, EXCLUDED.name),
+             institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
            RETURNING id`,
           [assignedAdminName || (name || 'Program') + ' Admin', assignedAdminEmail.toLowerCase().trim(), passwordHash, collegeId]
         );
@@ -848,9 +848,9 @@ collegeRouter.post(
         `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
          VALUES ($1, $2, $3, 'COUNSELLOR', 'ACTIVE', $4)
          ON CONFLICT (email) DO UPDATE SET 
-           role = 'COUNSELLOR',
-           name = EXCLUDED.name,
-           institution_id = EXCLUDED.institution_id
+           role = CASE WHEN identity.users.role IN ('PLATFORM_OWNER', 'SUPER_ADMIN', 'DEPARTMENT_ADMIN', 'PROGRAM_ADMIN') THEN identity.users.role ELSE 'COUNSELLOR' END,
+           name = COALESCE(identity.users.name, EXCLUDED.name),
+           institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
          RETURNING id`,
         [name, email, passwordHash, collegeId]
       );
@@ -932,9 +932,9 @@ collegeRouter.post(
             `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
              VALUES ($1, $2, $3, 'COUNSELLOR', 'ACTIVE', $4)
              ON CONFLICT (email) DO UPDATE SET 
-               role = 'COUNSELLOR',
-               name = EXCLUDED.name,
-               institution_id = EXCLUDED.institution_id
+               role = CASE WHEN identity.users.role IN ('PLATFORM_OWNER', 'SUPER_ADMIN', 'DEPARTMENT_ADMIN', 'PROGRAM_ADMIN') THEN identity.users.role ELSE 'COUNSELLOR' END,
+               name = COALESCE(identity.users.name, EXCLUDED.name),
+               institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
              RETURNING id`,
             [name, email.toLowerCase(), passwordHash, collegeId]
           );
