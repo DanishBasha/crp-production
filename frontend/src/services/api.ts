@@ -660,7 +660,7 @@ class ApiClient {
   constructor() {
     this.token = localStorage.getItem('auth_token');
     try {
-      const MOCK_CLEANED_VERSION = 'v4_zero_dummy_data_prod';
+      const MOCK_CLEANED_VERSION = 'v5_complete_reset_keep_owner';
       if (localStorage.getItem('crp_data_version') !== MOCK_CLEANED_VERSION) {
         localStorage.removeItem('admin_students');
         localStorage.removeItem('platform_colleges');
