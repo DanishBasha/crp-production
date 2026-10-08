@@ -302,6 +302,12 @@ ownerRouter.delete(
 
       // 7. Delete corresponding admin / staff users from identity.users
       if (userIdsToDelete.length > 0) {
+        await client.query(`UPDATE system.audit_logs SET actor_user_id = NULL WHERE actor_user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
+        await client.query(`UPDATE agent.agent_runs SET triggered_by_user_id = NULL WHERE triggered_by_user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
+        await client.query(`DELETE FROM org.faculty_profiles WHERE user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
+        await client.query(`DELETE FROM org.student_mentor_assignments WHERE mentor_user_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
+        await client.query(`DELETE FROM org.trainer_subdivision_assignments WHERE trainer_user_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
+        await client.query(`DELETE FROM placement.mentor_verifications WHERE mentor_user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
         await client.query(`DELETE FROM identity.users WHERE id = ANY($1::uuid[]) AND role != 'PLATFORM_OWNER'`, [userIdsToDelete]).catch(() => {});
       }
 

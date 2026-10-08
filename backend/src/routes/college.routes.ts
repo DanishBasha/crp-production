@@ -227,6 +227,22 @@ collegeRouter.patch(
   }
 );
 
+async function deleteUsersSafely(client: any, userIds: string[]) {
+  if (!userIds || userIds.length === 0) return;
+  await client.query(`UPDATE system.audit_logs SET actor_user_id = NULL WHERE actor_user_id = ANY($1::uuid[])`, [userIds]).catch(() => {});
+  await client.query(`UPDATE agent.agent_runs SET triggered_by_user_id = NULL WHERE triggered_by_user_id = ANY($1::uuid[])`, [userIds]).catch(() => {});
+  await client.query(`DELETE FROM identity.role_assignments WHERE user_id = ANY($1::uuid[])`, [userIds]).catch(() => {});
+  await client.query(`DELETE FROM org.department_staff WHERE user_id = ANY($1::uuid[])`, [userIds]).catch(() => {});
+  await client.query(`DELETE FROM org.faculty_profiles WHERE user_id = ANY($1::uuid[])`, [userIds]).catch(() => {});
+  await client.query(`DELETE FROM org.student_mentor_assignments WHERE mentor_user_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])`, [userIds]).catch(() => {});
+  await client.query(`DELETE FROM org.trainer_subdivision_assignments WHERE trainer_user_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])`, [userIds]).catch(() => {});
+  await client.query(`DELETE FROM placement.mentor_verifications WHERE mentor_user_id = ANY($1::uuid[])`, [userIds]).catch(() => {});
+  await client.query(
+    `DELETE FROM identity.users WHERE id = ANY($1::uuid[]) AND role NOT IN ('PLATFORM_OWNER', 'SUPER_ADMIN')`,
+    [userIds]
+  ).catch(() => {});
+}
+
 // ── DELETE /api/college/:collegeId/departments/:deptId ───────────────────────
 collegeRouter.delete(
   '/:collegeId/departments/:deptId',
@@ -274,35 +290,30 @@ collegeRouter.delete(
         ).catch(() => {});
       }
 
-      // 3. Delete role assignments
-      if (userIdsToDelete.length > 0) {
-        await client.query(
-          `DELETE FROM identity.role_assignments WHERE user_id = ANY($1::uuid[])`,
-          [userIdsToDelete]
-        ).catch(() => {});
-      }
-
-      // 4. Delete department classes
+      // 3. Delete department classes
       await client.query(
         `DELETE FROM org.department_classes 
          WHERE department_id = $1 OR (institution_id = $2 AND LOWER(department) = LOWER($3))`,
         [deptId, resolvedCollegeId, dept.name]
       ).catch(() => {});
 
-      // 5. Delete department staff
+      // 4. Delete department staff
       await client.query(
         `DELETE FROM org.department_staff 
          WHERE department_id = $1 OR (institution_id = $2 AND LOWER(department) = LOWER($3))`,
         [deptId, resolvedCollegeId, dept.name]
       ).catch(() => {});
 
-      // 6. Delete users from identity.users
+      // 5. Delete department interview assignments
+      await client.query(
+        `DELETE FROM org.interview_assignments 
+         WHERE institution_id = $1 AND (target_department = $2 OR target_departments ? $2)`,
+        [resolvedCollegeId, dept.name]
+      ).catch(() => {});
+
+      // 6. Delete users safely
       if (userIdsToDelete.length > 0) {
-        await client.query(
-          `DELETE FROM identity.users 
-           WHERE id = ANY($1::uuid[]) AND role NOT IN ('PLATFORM_OWNER', 'SUPER_ADMIN')`,
-          [userIdsToDelete]
-        ).catch(() => {});
+        await deleteUsersSafely(client, userIdsToDelete);
       }
 
       // 7. Delete the department
@@ -632,19 +643,19 @@ collegeRouter.delete(
       }
 
       // 4. Delete interview assignments for this program
-      await client.query(`DELETE FROM org.interview_assignments WHERE program_id = $1`, [progId]).catch(() => {});
+      await client.query(
+        `DELETE FROM org.interview_assignments 
+         WHERE institution_id = $1 AND (target_program_name = $2 OR target_program_names ? $2)`,
+        [resolvedCollegeId, program.name]
+      ).catch(() => {});
 
       // 5. Unlink students and delete batches
       await client.query(`UPDATE org.students SET batch_id = NULL, program_id = NULL WHERE program_id = $1`, [progId]).catch(() => {});
       await client.query(`DELETE FROM org.batches WHERE program_id = $1`, [progId]).catch(() => {});
 
-      // 6. Delete users from identity.users
+      // 6. Delete users safely
       if (userIdsToDelete.length > 0) {
-        await client.query(
-          `DELETE FROM identity.users 
-           WHERE id = ANY($1::uuid[]) AND role NOT IN ('PLATFORM_OWNER', 'SUPER_ADMIN')`,
-          [userIdsToDelete]
-        ).catch(() => {});
+        await deleteUsersSafely(client, userIdsToDelete);
       }
 
       // 7. Delete the program
@@ -873,10 +884,12 @@ collegeRouter.delete(
       await client.query('BEGIN');
 
       if (staff.user_id) {
-        await client.query(`DELETE FROM identity.role_assignments WHERE user_id = $1`, [staff.user_id]).catch(() => {});
-        await client.query(`DELETE FROM identity.users WHERE id = $1 AND role NOT IN ('PLATFORM_OWNER', 'SUPER_ADMIN')`, [staff.user_id]).catch(() => {});
+        await deleteUsersSafely(client, [staff.user_id]);
       } else if (staff.email) {
-        await client.query(`DELETE FROM identity.users WHERE LOWER(email) = LOWER($1) AND role NOT IN ('PLATFORM_OWNER', 'SUPER_ADMIN')`, [staff.email]).catch(() => {});
+        const { rows: uRows } = await client.query(`SELECT id FROM identity.users WHERE LOWER(email) = LOWER($1)`, [staff.email]);
+        if (uRows.length > 0) {
+          await deleteUsersSafely(client, [uRows[0].id]);
+        }
       }
 
       if (staff.email) {
