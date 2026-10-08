@@ -89,83 +89,150 @@ function extractPrimarySkillsAndDomain(student: StudentProfile): {
   return { primaryLanguage, secondaryTech, primaryProject, domainName, domainCategory };
 }
 
-function generateDynamicQuestions(student: StudentProfile): QuestionTurn[] {
-  const { primaryLanguage, secondaryTech, primaryProject, domainName, domainCategory } = extractPrimarySkillsAndDomain(student);
+function generateDynamicQuestions(student: StudentProfile, customTopic?: string): QuestionTurn[] {
+  const normTopic = (customTopic || student.track || student.department || '').toLowerCase();
+  const { primaryLanguage, secondaryTech, primaryProject, domainName } = extractPrimarySkillsAndDomain(student);
   const techList = secondaryTech.length > 0 ? secondaryTech.join(', ') : 'modern architecture patterns';
 
-  // Question 1: Focused on candidate's real project and actual skills
-  const q1Text = `Walk me through the system architecture of your project "${primaryProject}". Specifically, how did you structure the components using ${primaryLanguage} and ${techList}, and what was the main engineering challenge you solved?`;
-
-  // Question 2: Focused on candidate's actual domain
-  let q2Text = '';
-  let q2Category = 'Concurrency & System Architecture';
-  switch (domainCategory) {
-    case 'AI_ML':
-      q2Text = `In machine learning workflows, how do you handle data preprocessing, prevent data leakage during feature engineering, and evaluate model performance beyond simple accuracy (such as precision-recall tradeoffs)?`;
-      q2Category = 'Data Engineering & Model Evaluation';
-      break;
-    case 'FULL_STACK':
-      q2Text = `In a modern web application, suppose page load times are sluggish under high user concurrency. How would you optimize frontend rendering, manage state efficiently, and minimize network payload overhead?`;
-      q2Category = 'Frontend Performance & State Architecture';
-      break;
-    case 'CLOUD_DEVOPS':
-      q2Text = `When deploying services across containerized environments, how do you configure automated CI/CD pipelines, ensure zero-downtime rolling updates, and implement centralized observability?`;
-      q2Category = 'Containerization & Observability';
-      break;
-    case 'CYBERSECURITY':
-      q2Text = `How do you secure API endpoints and sensitive data transmission against common vulnerabilities like CSRF, SQL injection, and unauthorized token manipulation?`;
-      q2Category = 'Application Security & Hardening';
-      break;
-    case 'MOBILE':
-      q2Text = `How do you manage offline data synchronization, background task execution, and smooth UI frame rendering (60 FPS) in a mobile application?`;
-      q2Category = 'Mobile Lifecycle & Offline Sync';
-      break;
-    case 'BACKEND':
-    default:
-      q2Text = `In the context of ${domainName}, suppose query traffic spikes by 10x. How would you diagnose performance bottlenecks, optimize database indexing, and implement caching or asynchronous processing?`;
-      q2Category = 'Concurrency & Scalability';
-      break;
+  // Topic: Python
+  if (normTopic.includes('python')) {
+    const pyQuestions = [
+      { text: "Can you explain the Python data model, mutable versus immutable built-in data types, and how dictionary hashing works under the hood?", diff: 'EASY' as const, cat: 'Python Core & Data Model' },
+      { text: "How do Python generators and the yield keyword work, and in what scenarios do they offer major memory efficiency advantages over lists?", diff: 'EASY' as const, cat: 'Python Iterators & Generators' },
+      { text: "What is the Global Interpreter Lock (GIL) in CPython, and what are the architectural trade-offs between multi-threading, multi-processing, and asyncio?", diff: 'EASY' as const, cat: 'Python Concurrency & GIL' },
+      { text: "How does Python handle memory management, reference counting, and cyclic garbage collection with generations?", diff: 'EASY' as const, cat: 'Memory Management' },
+      { text: "Walk me through how decorators work in Python. How would you write a reusable decorator that logs execution time and preserves metadata using functools.wraps?", diff: 'MEDIUM' as const, cat: 'Python Metaprogramming' },
+      { text: "What is the difference between __new__ and __init__ in Python classes, and how are metaclasses used to enforce class structures?", diff: 'MEDIUM' as const, cat: 'Object-Oriented Python' },
+      { text: "How do context managers work in Python with __enter__ and __exit__, and how does contextlib.contextmanager simplify resource handling?", diff: 'MEDIUM' as const, cat: 'Resource Management' },
+      { text: "How would you handle heavy CPU-bound workloads in Python? When would you look at C-extensions, Cython, or multiprocessing pools?", diff: 'MEDIUM' as const, cat: 'Performance Optimization' },
+      { text: "In asynchronous Python with asyncio, how do event loops schedule coroutines, and how do you prevent blocking calls from freezing the entire loop?", diff: 'MEDIUM' as const, cat: 'AsyncIO & Event Loops' },
+      { text: "How do you leverage type hinting and MyPy static analysis in Python to achieve robust type safety and structural subtyping with Protocols?", diff: 'ADVANCED' as const, cat: 'Static Typing & Tooling' },
+      { text: "When architecting a production REST or GraphQL API using FastAPI or Django, how do you handle dependency injection, connection pooling, and background tasks?", diff: 'ADVANCED' as const, cat: 'Web Framework Architecture' },
+      { text: "Describe your strategy for profiling CPU bottlenecks and memory leaks in a live Python service using cProfile and tracemalloc.", diff: 'ADVANCED' as const, cat: 'Profiling & Observability' },
+      { text: "How would you design a distributed, fault-tolerant background task processing queue in Python with Celery and Redis with idempotent retry mechanisms?", diff: 'ADVANCED' as const, cat: 'Distributed Systems in Python' },
+      { text: "How do you manage complex package dependencies, lock files, and containerization security vulnerabilities in Python production deployments?", diff: 'ADVANCED' as const, cat: 'Packaging & Security' },
+      { text: "What architectural patterns do you employ when designing clean architecture and domain-driven design in large Python codebases?", diff: 'ADVANCED' as const, cat: 'Domain-Driven Design' }
+    ];
+    return pyQuestions.map((q, idx) => ({
+      id: `q_py_${idx + 1}_${Date.now() + idx}`,
+      questionNumber: idx + 1,
+      questionText: q.text,
+      difficulty: q.diff,
+      category: q.cat
+    }));
   }
 
-  // Question 3: Resilience, Edge Cases & Real-world production tradeoffs
-  let q3Text = '';
-  let q3Category = 'Resilience & Production Readiness';
-  switch (domainCategory) {
-    case 'AI_ML':
-      q3Text = `When deploying your model into live production inference, what strategies would you use to handle model latency, batching requests, and monitoring for real-time concept drift?`;
-      break;
-    case 'FULL_STACK':
-    case 'BACKEND':
-      q3Text = `What happens when downstream third-party APIs or database connections intermittently time out? Explain how you implement circuit breakers, retry backoff with jitter, and maintain data consistency.`;
-      break;
-    default:
-      q3Text = `Describe how you design fault-tolerant systems in ${primaryLanguage}. When unexpected failures occur, what automated recovery and telemetry strategies ensure zero data loss?`;
-      break;
+  // Topic: React / Frontend
+  if (normTopic.includes('react') || normTopic.includes('frontend') || normTopic.includes('web')) {
+    const reactQuestions = [
+      { text: "How does React's Virtual DOM reconciliation and Fiber diffing algorithm optimize DOM updates compared to direct DOM manipulation?", diff: 'EASY' as const, cat: 'React Core & Reconciliation' },
+      { text: "Explain the rules and mechanics of React Hooks, specifically how useState and useEffect maintain state across component re-renders.", diff: 'EASY' as const, cat: 'React Hooks & Lifecycle' },
+      { text: "What are the key trade-offs between component state, Context API, Redux Toolkit, and atomic state libraries like Zustand?", diff: 'EASY' as const, cat: 'State Management' },
+      { text: "How do useCallback and useMemo work under the hood, and when does premature memoization hurt performance rather than help?", diff: 'EASY' as const, cat: 'Performance Optimization' },
+      { text: "What is the browser critical rendering path, and how do reflow and repaint cycles impact 60 FPS rendering in interactive web apps?", diff: 'MEDIUM' as const, cat: 'Browser Rendering & DOM' },
+      { text: "Explain how React Server Components (RSC) differ from traditional Client Components and Server-Side Rendering (SSR).", diff: 'MEDIUM' as const, cat: 'Modern React Architecture' },
+      { text: "How would you diagnose and fix a slow web application with poor Core Web Vitals (LCP, INP, CLS)?", diff: 'MEDIUM' as const, cat: 'Core Web Vitals & Web Performance' },
+      { text: "How do you prevent race conditions when handling multiple asynchronous data requests triggered by rapid user input in React?", diff: 'MEDIUM' as const, cat: 'Async State & Data Fetching' },
+      { text: "What security measures do you implement in frontend applications to prevent Cross-Site Scripting (XSS), CSRF, and token theft?", diff: 'MEDIUM' as const, cat: 'Frontend Security' },
+      { text: "How would you design a micro-frontend architecture using Webpack Module Federation for independent multi-team deployments?", diff: 'ADVANCED' as const, cat: 'Micro-frontends & Build Systems' },
+      { text: "Explain how Service Workers, Cache Storage API, and Web Workers enable offline capabilities and background multi-threading.", diff: 'ADVANCED' as const, cat: 'PWA & Web Workers' },
+      { text: "How do you architect an enterprise design system with accessible components conforming strictly to WCAG 2.1 AA specifications?", diff: 'ADVANCED' as const, cat: 'Design Systems & Accessibility' },
+      { text: "When implementing real-time collaborative features in web applications, how do you handle WebSocket connection state and data conflict resolution (CRDTs/OT)?", diff: 'ADVANCED' as const, cat: 'Real-time & Collaborative Systems' },
+      { text: "Describe your end-to-end testing and visual regression pipeline for frontend applications using Vitest, React Testing Library, and Playwright.", diff: 'ADVANCED' as const, cat: 'Testing & Quality Assurance' },
+      { text: "How do you architect frontend bundle splitting, dynamic imports, and CDN caching headers to achieve sub-second initial paint times globally?", diff: 'ADVANCED' as const, cat: 'Bundle Optimization & Delivery' }
+    ];
+    return reactQuestions.map((q, idx) => ({
+      id: `q_fe_${idx + 1}_${Date.now() + idx}`,
+      questionNumber: idx + 1,
+      questionText: q.text,
+      difficulty: q.diff,
+      category: q.cat
+    }));
   }
 
-  return [
-    {
-      id: `q_1_${Date.now()}`,
-      questionNumber: 1,
-      questionText: q1Text,
-      difficulty: 'EASY',
-      category: 'System Architecture & Core Principles'
-    },
-    {
-      id: `q_2_${Date.now() + 1}`,
-      questionNumber: 2,
-      questionText: q2Text,
-      difficulty: 'MEDIUM',
-      category: q2Category
-    },
-    {
-      id: `q_3_${Date.now() + 2}`,
-      questionNumber: 3,
-      questionText: q3Text,
-      difficulty: 'ADVANCED',
-      category: q3Category
-    }
+  // Topic: System Design & Architecture
+  if (normTopic.includes('system design') || normTopic.includes('architecture') || normTopic.includes('distributed')) {
+    const sysQuestions = [
+      { text: "What are the core trade-offs between monolithic architectures and microservices architectures, and when should a team decouple?", diff: 'EASY' as const, cat: 'System Architecture Fundamentals' },
+      { text: "Explain horizontal versus vertical scaling, and describe how load balancers distribute traffic using algorithms like Round Robin and Consistent Hashing.", diff: 'EASY' as const, cat: 'Scalability & Load Balancing' },
+      { text: "What is the CAP theorem, and how does the PACELC theorem expand our understanding of latency versus consistency in distributed databases?", diff: 'EASY' as const, cat: 'CAP Theorem & Distributed Data' },
+      { text: "How do caching strategies like Cache-Aside, Write-Through, and Write-Behind differ, and how do you prevent cache stampedes and thundering herds?", diff: 'EASY' as const, cat: 'Caching & Eviction Strategies' },
+      { text: "Compare relational databases (PostgreSQL) with NoSQL databases (Document, Key-Value, Columnar) for high-throughput write workloads.", diff: 'MEDIUM' as const, cat: 'Database Selection & Modeling' },
+      { text: "How does a distributed message broker like Apache Kafka handle event partitioning, consumer groups, and offset commit semantics?", diff: 'MEDIUM' as const, cat: 'Message Brokers & Event Streaming' },
+      { text: "What mechanisms guarantee data consistency across microservices: Two-Phase Commit (2PC) versus the Saga pattern with compensating transactions?", diff: 'MEDIUM' as const, cat: 'Distributed Transactions' },
+      { text: "How do you implement rate limiting across distributed microservices using algorithms like Token Bucket, Leaky Bucket, and Redis sliding windows?", diff: 'MEDIUM' as const, cat: 'Rate Limiting & Traffic Shaping' },
+      { text: "How do you design a distributed unique ID generator (such as Twitter Snowflake) that guarantees time-sortability and high throughput without centralized locks?", diff: 'MEDIUM' as const, cat: 'Distributed Algorithms' },
+      { text: "How do you implement circuit breakers, retry backoff with randomized jitter, and bulkheads to prevent cascading system failures?", diff: 'ADVANCED' as const, cat: 'Resilience & Fault Tolerance' },
+      { text: "How do distributed consensus algorithms like Raft and Paxos ensure cluster state consistency during leader election and network partitions?", diff: 'ADVANCED' as const, cat: 'Distributed Consensus' },
+      { text: "Design a scalable URL shortening service (like Bitly) supporting 100 million daily active users, detailing the database schema, hashing, caching, and analytics.", diff: 'ADVANCED' as const, cat: 'System Design Case Study' },
+      { text: "How do you architect end-to-end distributed tracing and observability using OpenTelemetry, structured logging, and real-time anomaly alerting?", diff: 'ADVANCED' as const, cat: 'Telemetry & Observability' },
+      { text: "When dealing with geo-distributed database replication, how do you handle replication lag, conflict resolution, and read-after-write consistency for users?", diff: 'ADVANCED' as const, cat: 'Geo-Replication & Consistency' },
+      { text: "How would you design a real-time notification service delivering push, SMS, and email notifications to 50 million concurrent subscribers with deduplication?", diff: 'ADVANCED' as const, cat: 'High Scale Notification Engine' }
+    ];
+    return sysQuestions.map((q, idx) => ({
+      id: `q_sd_${idx + 1}_${Date.now() + idx}`,
+      questionNumber: idx + 1,
+      questionText: q.text,
+      difficulty: q.diff,
+      category: q.cat
+    }));
+  }
+
+  // Topic: Database & SQL
+  if (normTopic.includes('database') || normTopic.includes('sql') || normTopic.includes('postgres')) {
+    const dbQuestions = [
+      { text: "Can you explain the ACID properties in relational databases and how each property is guaranteed by the database engine?", diff: 'EASY' as const, cat: 'ACID Transactions' },
+      { text: "What are the rules of database normalization (1NF, 2NF, 3NF, BCNF), and in what scenarios is intentional denormalization preferred?", diff: 'EASY' as const, cat: 'Schema Normalization' },
+      { text: "How do B-Tree indexes work in relational databases, and what queries are well-suited for index scans versus sequential scans?", diff: 'EASY' as const, cat: 'Indexing Fundamentals' },
+      { text: "How do transaction isolation levels (Read Uncommitted, Read Committed, Repeatable Read, Serializable) protect against concurrency anomalies?", diff: 'EASY' as const, cat: 'Transaction Isolation Levels' },
+      { text: "How do you read and interpret an EXPLAIN ANALYZE query plan to identify slow table scans, join bottlenecks, and memory spillages?", diff: 'MEDIUM' as const, cat: 'Query Optimization & EXPLAIN' },
+      { text: "Explain the difference between Nested Loop, Hash Join, and Merge Join in database query execution engines.", diff: 'MEDIUM' as const, cat: 'Join Algorithms & Query Engine' },
+      { text: "What is the Write-Ahead Log (WAL) in PostgreSQL, and how does it guarantee durability and crash recovery?", diff: 'MEDIUM' as const, cat: 'Write-Ahead Logging & Durability' },
+      { text: "How do database locks work: shared locks, exclusive locks, row-level locks, and how does the database engine detect and resolve deadlocks?", diff: 'MEDIUM' as const, cat: 'Locking & Deadlock Resolution' },
+      { text: "What are the differences between horizontal sharding, range partitioning, and hash partitioning for large-scale data tables?", diff: 'MEDIUM' as const, cat: 'Partitioning & Sharding' },
+      { text: "How do database connection poolers like PgBouncer manage pooled connections, transaction mode versus session mode, and connection exhaustion?", diff: 'ADVANCED' as const, cat: 'Connection Pooling & Sizing' },
+      { text: "How do you design a zero-downtime database migration strategy for rolling out non-null columns and schema transformations on multi-terabyte tables?", diff: 'ADVANCED' as const, cat: 'Zero-Downtime Schema Migrations' },
+      { text: "Explain how PostgreSQL implements Multi-Version Concurrency Control (MVCC) and why the VACUUM process is necessary for managing dead tuples.", diff: 'ADVANCED' as const, cat: 'MVCC & Vacuum Internals' },
+      { text: "How does PostgreSQL full-text search with tsvector and GIN indexing compare to dedicated search clusters like Elasticsearch?", diff: 'ADVANCED' as const, cat: 'Full-Text Search & Inverted Indexes' },
+      { text: "How do you configure physical streaming replication versus logical replication, and how do you monitor and minimize replication lag?", diff: 'ADVANCED' as const, cat: 'Replication & High Availability' },
+      { text: "How do you model time-series data in relational databases, using features like hyper-tables, columnar compression, and continuous aggregates?", diff: 'ADVANCED' as const, cat: 'Time-Series Modeling & Compression' }
+    ];
+    return dbQuestions.map((q, idx) => ({
+      id: `q_db_${idx + 1}_${Date.now() + idx}`,
+      questionNumber: idx + 1,
+      questionText: q.text,
+      difficulty: q.diff,
+      category: q.cat
+    }));
+  }
+
+  // Dynamic 15-Question Generation for any other topic or candidate resume
+  const targetTopicLabel = customTopic ? customTopic.trim() : `${primaryLanguage} & ${domainName}`;
+  const genericQuestions = [
+    { text: `Walk me through the system architecture of your project "${primaryProject}". Specifically, how did you structure components using ${primaryLanguage} and ${techList}, and what was the main engineering challenge you solved?`, diff: 'EASY' as const, cat: 'System Architecture & Principles' },
+    { text: `In the context of ${targetTopicLabel}, how are data structures and variable lifecycles managed in memory during execution?`, diff: 'EASY' as const, cat: 'Data Structures & Memory' },
+    { text: `What are the primary error handling conventions, retry strategies, and exception recovery patterns you rely on in ${targetTopicLabel}?`, diff: 'EASY' as const, cat: 'Error Handling & Resilience' },
+    { text: `How does ${targetTopicLabel} manage concurrency, multi-threading, or asynchronous tasks when processing simultaneous high-throughput requests?`, diff: 'EASY' as const, cat: 'Concurrency & Async Models' },
+    { text: `Suppose query or request traffic spikes by 10x in ${targetTopicLabel}. How would you diagnose performance bottlenecks, optimize database indexing, and implement caching?`, diff: 'MEDIUM' as const, cat: 'Scalability & Bottlenecks' },
+    { text: `How do you structure modular components, dependency injection, and clean boundary separation when building large-scale solutions in ${targetTopicLabel}?`, diff: 'MEDIUM' as const, cat: 'Modular Architecture' },
+    { text: `What testing frameworks and mocking strategies do you use to achieve reliable unit, integration, and contract test coverage in ${targetTopicLabel}?`, diff: 'MEDIUM' as const, cat: 'Testing & Quality Assurance' },
+    { text: `What security vulnerabilities, authentication flows, and input sanitization practices are essential to protect against in ${targetTopicLabel}?`, diff: 'MEDIUM' as const, cat: 'Application Security' },
+    { text: `How does ${targetTopicLabel} interact with external databases or message streams, and how do you prevent connection pool starvation?`, diff: 'MEDIUM' as const, cat: 'Persistence & I/O' },
+    { text: `Explain how you implement distributed resilience patterns like circuit breakers, retry backoff with jitter, and dead letter queues in ${targetTopicLabel}.`, diff: 'ADVANCED' as const, cat: 'Fault Tolerance & Resilience' },
+    { text: `How do you configure CI/CD automation, automated linting, container builds, and zero-downtime rolling deployments for ${targetTopicLabel}?`, diff: 'ADVANCED' as const, cat: 'DevOps & Containerization' },
+    { text: `What telemetry, distributed tracing, structured logging, and health probe architectures do you establish for monitoring ${targetTopicLabel} in production?`, diff: 'ADVANCED' as const, cat: 'Telemetry & Observability' },
+    { text: `Describe how you design fault-tolerant systems in ${primaryLanguage}. When unexpected failures occur, what automated recovery and telemetry strategies ensure zero data loss?`, diff: 'ADVANCED' as const, cat: 'Disaster Recovery' },
+    { text: `Describe a complex edge-case bug or performance incident you resolved in ${targetTopicLabel} and how you conducted the post-mortem analysis.`, diff: 'ADVANCED' as const, cat: 'Incident Response & Post-Mortem' },
+    { text: `What architectural trade-offs do you evaluate when deciding between ${targetTopicLabel} and competing industry alternatives for high-scale enterprise systems?`, diff: 'ADVANCED' as const, cat: 'Architectural Trade-offs' }
   ];
+
+  return genericQuestions.map((q, idx) => ({
+    id: `q_dyn_${idx + 1}_${Date.now() + idx}`,
+    questionNumber: idx + 1,
+    questionText: q.text,
+    difficulty: q.diff,
+    category: q.cat
+  }));
 }
 
 function analyzeSpokenSpeech(text: string, durationSeconds = 18): {
@@ -1625,16 +1692,17 @@ class ApiClient {
   };
 
   interview = {
-    start: async (studentId: string, type: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION' | 'PRACTICE' = 'MOCK_INTERVIEW'): Promise<{ sessionId: string; firstQuestion: QuestionTurn }> => {
+    start: async (studentId: string, type: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION' | 'PRACTICE' = 'MOCK_INTERVIEW', topic?: string): Promise<{ sessionId: string; firstQuestion: QuestionTurn }> => {
       try {
         const res = await this._fetch<{ data: { sessionId: string; firstQuestion: QuestionTurn } }>('/interview/start', {
           method: 'POST',
-          body: JSON.stringify({ studentId, type }),
+          body: JSON.stringify({ studentId, type, topic }),
         });
         if (res?.data?.sessionId && res.data.firstQuestion) {
           const sess = {
             sessionId: res.data.sessionId,
             type,
+            topic,
             turnIndex: 0,
             questions: [res.data.firstQuestion],
             tabSwitches: 0
@@ -1646,14 +1714,15 @@ class ApiClient {
         console.warn('[api.interview.start] Real backend start fallback:', err);
       }
 
-      // Dynamic fallback based on real student profile
+      // Dynamic fallback based on real student profile and topic
       const student = await this.student.getProfile(studentId);
-      const dynamicTurns = generateDynamicQuestions(student);
+      const dynamicTurns = generateDynamicQuestions(student, topic);
       const firstQ = dynamicTurns[0];
       const sessionId = `ses_${Date.now()}`;
       const sessionData = {
         sessionId,
         type,
+        topic,
         turnIndex: 0,
         questions: [firstQ],
         plannedTurns: dynamicTurns,
@@ -1677,7 +1746,12 @@ class ApiClient {
       return { tabSwitches: sess.tabSwitches, isFlagged };
     },
 
-    submitAnswer: async (sessionId: string, studentAnswer: string, durationSeconds = 20): Promise<{
+    submitAnswer: async (
+      sessionId: string, 
+      studentAnswer: string, 
+      durationSeconds = 20,
+      options?: { topic?: string; timeExpired?: boolean }
+    ): Promise<{
       isCompleted: boolean;
       turnEvaluation?: QuestionTurn;
       nextQuestion?: QuestionTurn;
@@ -1690,6 +1764,7 @@ class ApiClient {
       });
       const turnIdx = sess.turnIndex || 0;
       const currentQ = sess.questions[turnIdx] || { questionNumber: turnIdx + 1, questionText: 'Technical interview question', difficulty: 'MEDIUM', category: 'Engineering' };
+      const currentTopic = options?.topic || sess.topic || currentQ.category || 'Software Engineering';
 
       try {
         const student = await this.student.getProfile();
@@ -1711,7 +1786,9 @@ class ApiClient {
             currentQuestion: currentQ,
             previousTurns: sess.questions.slice(0, turnIdx),
             sessionType: sess.type || 'MOCK_INTERVIEW',
-            tabSwitches: sess.tabSwitches || 0
+            tabSwitches: sess.tabSwitches || 0,
+            topic: currentTopic,
+            timeExpired: options?.timeExpired
           }),
         });
 
@@ -1731,15 +1808,15 @@ class ApiClient {
         console.warn('[api.interview.submitAnswer] Real AI backend evaluation fallback:', err);
       }
 
-      // Local fallback calculation if backend was unreachable
+      // Local fallback calculation if backend was unreachable: scale to 13+ questions
       const student = await this.student.getProfile();
       const evalResult = evaluateDynamicAnswer(currentQ, studentAnswer, turnIdx, durationSeconds, student);
       const turnEvaluation: QuestionTurn = {
         id: currentQ.id || `q_${turnIdx + 1}`,
         questionNumber: turnIdx + 1,
         questionText: currentQ.questionText,
-        difficulty: (turnIdx === 0 ? 'EASY' : turnIdx === 1 ? 'MEDIUM' : 'ADVANCED'),
-        category: currentQ.category,
+        difficulty: (turnIdx < 3 ? 'EASY' : turnIdx < 8 ? 'MEDIUM' : 'ADVANCED'),
+        category: currentQ.category || currentTopic,
         studentAnswer,
         technicalScore: evalResult.technicalScore,
         communicationScore: evalResult.communicationScore,
@@ -1751,18 +1828,22 @@ class ApiClient {
       };
 
       sess.questions[turnIdx] = turnEvaluation;
-      const isCompleted = turnIdx >= 2;
+      const isCompleted = (turnIdx >= 12) || Boolean(options?.timeExpired) || (durationSeconds >= 1500);
       let nextQuestion: QuestionTurn | undefined = undefined;
       let finalReport: DiagnosticReport | undefined = undefined;
 
       if (!isCompleted) {
-        const nextDiff = turnIdx === 0 ? 'MEDIUM' : 'ADVANCED';
+        const pool = generateDynamicQuestions(student, currentTopic);
+        const askedTexts = new Set(sess.questions.map((q: any) => (q.questionText || '').toLowerCase().trim()));
+        const candidateQ = pool.find(q => !askedTexts.has(q.questionText.toLowerCase().trim())) || pool[Math.min(turnIdx + 1, pool.length - 1)];
+
+        const nextDiff = (turnIdx < 2 ? 'EASY' : turnIdx < 7 ? 'MEDIUM' : 'ADVANCED');
         nextQuestion = {
           id: `q_${turnIdx + 2}_${Date.now()}`,
           questionNumber: turnIdx + 2,
-          questionText: evalResult.nextQuestionText || "Can you elaborate on how you design scalable distributed systems?",
+          questionText: candidateQ.questionText,
           difficulty: nextDiff,
-          category: turnIdx === 0 ? 'Scalability & Concurrency' : 'Resilience & Architecture'
+          category: currentTopic
         };
         sess.turnIndex = turnIdx + 1;
         sess.questions.push(nextQuestion);
@@ -1824,19 +1905,50 @@ class ApiClient {
       return { replaysUsed: sess.replaysUsed };
     },
 
-    submitAnswers: async (sessionId: string, answers: { questionId: string; answerText: string }[]) => {
+    submitAnswers: async (sessionId: string, answers: { questionId: string; answerText: string }[], options?: { passage?: any; topic?: string }) => {
+      const student = await this.student.getProfile();
+
+      // 1. Attempt backend submission with PostgreSQL persistence
+      try {
+        const backendRes = await this._fetch<{ data: { overallScore: number; evaluations: any[]; finalReport: any } }>('/listening/submit-answers', {
+          method: 'POST',
+          body: JSON.stringify({
+            sessionId,
+            studentId: student?.id,
+            topic: options?.topic,
+            passage: options?.passage,
+            answers
+          })
+        });
+
+        if (backendRes?.data?.finalReport) {
+          const report = backendRes.data.finalReport;
+          student.recentReports = [report, ...(student.recentReports || [])];
+          student.overallReadiness = backendRes.data.overallScore;
+          student.score = backendRes.data.overallScore;
+          return backendRes.data;
+        }
+      } catch (err) {
+        console.warn('[api.listening.submitAnswers] Backend submission fallback:', err);
+      }
+
+      // 2. Fallback to client-side evaluation matching all passage questions
       const sess = this.getStorage<any>(`listening_${sessionId}`, {
         passage: LISTENING_PASSAGES[0],
         replaysUsed: 0
       });
-      const passage = sess.passage || LISTENING_PASSAGES[0];
-      const student = await this.student.getProfile();
+      const passage = options?.passage || sess.passage || LISTENING_PASSAGES[0];
+      const passageQuestions: any[] = passage.questions || [];
 
       let totalScore = 0;
       const evaluations = answers.map((ans, idx) => {
-        const qObj = passage.questions[idx] || passage.questions[0];
-        const lowerAnswer = ans.answerText.toLowerCase();
-        const keywords = qObj.keywords || [];
+        const qObj = passageQuestions.find((q: any) => q.id === ans.questionId) || passageQuestions[idx] || {
+          questionText: `Listening Question ${idx + 1}`,
+          targetKeywords: [],
+          idealAnswerSummary: ''
+        };
+        const lowerAnswer = (ans.answerText || '').toLowerCase();
+        const keywords: string[] = qObj.targetKeywords || qObj.keywords || [];
 
         let score = 65;
         let matchedKeywords = 0;
@@ -1847,7 +1959,7 @@ class ApiClient {
           }
         });
 
-        if (ans.answerText.trim().length > 20) score += 5;
+        if ((ans.answerText || '').trim().length > 20) score += 5;
         score = Math.min(98, score);
         totalScore += score;
 
@@ -1855,7 +1967,7 @@ class ApiClient {
           questionIndex: idx,
           questionText: qObj.questionText,
           studentAnswer: ans.answerText,
-          expectedAnswer: qObj.expectedAnswer,
+          expectedAnswer: qObj.idealAnswerSummary || qObj.expectedAnswer || '',
           score,
           matchedKeywords,
           feedback: score >= 80 
@@ -1881,6 +1993,8 @@ class ApiClient {
 
       const finalReport = synthesizeDynamicReport('LISTENING_COMPREHENSION', turns, student, 0);
       finalReport.overallScore = avgScore;
+      finalReport.technicalScore = avgScore;
+      finalReport.communicationScore = Math.min(95, avgScore + 2);
 
       student.recentReports = [finalReport, ...(student.recentReports || [])];
       student.overallReadiness = avgScore;

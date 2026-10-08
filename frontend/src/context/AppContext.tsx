@@ -143,7 +143,7 @@ interface AppContextType {
   setStudent: React.Dispatch<React.SetStateAction<StudentProfile>>;
   interviewState: InterviewSessionState;
   startInterview: (type?: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION') => Promise<void>;
-  submitAnswer: (answerText: string) => Promise<void>;
+  submitAnswer: (answerText: string, options?: { timeExpired?: boolean }) => Promise<void>;
   endInterview: () => Promise<void>;
   completeAssessmentAwaitingEvaluation: (type: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION', finalReport?: DiagnosticReport | null) => Promise<void>;
   isEvaluationPending: boolean;
@@ -1204,8 +1204,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setActiveView(type === 'MOCK_INTERVIEW' ? 'INTERVIEW_ROOM' : 'LISTENING_ROOM');
 
+    const targetTopic = activeAssignment?.domainOrTopic || activeAssignment?.title || student.track || student.department;
+
     try {
-      const data = await api.interview.start(student.id || 'stu-21cs1084', type);
+      const data = await api.interview.start(student.id || 'stu-21cs1084', type, targetTopic);
       setInterviewState({
         isActive: true,
         sessionId: data.sessionId,
@@ -1227,9 +1229,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const fallbackQ: QuestionTurn = {
         id: `q_start_${Date.now()}`,
         questionNumber: 1,
-        questionText: `Walk me through the system architecture of your project "${proj}". Specifically, how did you design the components using ${lang}, and what was the main engineering challenge you solved?`,
+        questionText: targetTopic 
+          ? `In the context of ${targetTopic}, can you walk me through the system architecture of your project "${proj}", explaining your architectural choices and performance considerations?`
+          : `Walk me through the system architecture of your project "${proj}". Specifically, how did you design the components using ${lang}, and what was the main engineering challenge you solved?`,
         difficulty: 'EASY',
-        category: 'System Architecture & Core Principles'
+        category: targetTopic || 'System Architecture & Core Principles'
       };
       setInterviewState({
         isActive: true,
@@ -1275,7 +1279,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setIsEvaluationPending(true);
 
-    // Simulate asynchronous background LLM evaluation
+    // Background report calculation and delivery
     setTimeout(async () => {
       let report: DiagnosticReport | null = providedReport || null;
 
@@ -1294,6 +1298,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const avgComm = Math.round(turns.reduce((acc, t) => acc + (t.communicationScore || 0), 0) / turnCount);
         const avgWpm = Math.round(turns.reduce((acc, t) => acc + (t.wpm || 0), 0) / turnCount);
         const totalFillers = turns.reduce((acc, t) => acc + (t.fillerWords || 0), 0);
+        const topicLabel = activeAssignment?.domainOrTopic || activeAssignment?.title || student.track || 'Core Engineering';
 
         report = {
           id: `rep-${Date.now().toString().slice(-4)}`,
@@ -1306,13 +1311,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           totalFillerWords: totalFillers,
           fillerWordBreakdown: totalFillers > 0 ? { 'uh': Math.round(totalFillers * 0.5), 'um': Math.round(totalFillers * 0.5) } : {},
           skillBreakdown: [
-            { skill: `${student.track || 'General'} Core Competency`, score: avgTech, status: avgTech >= 80 ? 'STRONG' : 'MODERATE', recommendation: 'Consistent conceptual structure throughout the session.' },
+            { skill: `${topicLabel} Competency`, score: avgTech, status: avgTech >= 80 ? 'STRONG' : 'MODERATE', recommendation: `Demonstrated technical knowledge across ${turnCount} turns.` },
             { skill: 'Verbal Delivery & Pacing', score: avgComm, status: avgComm >= 80 ? 'STRONG' : 'MODERATE', recommendation: `Pacing averaged ${avgWpm} WPM.` }
           ],
           actionableNextSteps: [
-            `Your average pace was ${avgWpm} WPM. ${avgWpm >= 120 && avgWpm <= 150 ? 'Maintain this recruiter-optimal tempo.' : 'Aim for 120-150 WPM.'}`,
+            `Your average pace was ${avgWpm} WPM across ${turnCount} questions. ${avgWpm >= 120 && avgWpm <= 150 ? 'Maintain this recruiter-optimal tempo.' : 'Aim for 120-150 WPM.'}`,
             `Total verbal fillers: ${totalFillers}. Replace verbal fillers with quiet 1-second pauses.`,
-            `Articulate architectural trade-offs explicitly with space-time and fault tolerance analysis.`
+            `Articulate architectural trade-offs explicitly with space-time and fault tolerance analysis in ${topicLabel}.`
           ],
           tabSwitches: interviewState.tabSwitches,
           isFlagged: interviewState.isFlagged
@@ -1351,39 +1356,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         timestamp: Date.now()
       });
 
-      // Stack newly generated results onto Post-Interview Actionable Improvement Checklist
-      try {
-        const sKey = student.id || 'stu-21cs1084';
-        const saved = localStorage.getItem(`student_improvement_checklist_${sKey}`);
-        const currentList: ImprovementChecklistItem[] = saved ? JSON.parse(saved) : [];
-        const newItems: ImprovementChecklistItem[] = (report.actionableNextSteps || []).map((step, idx) => ({
-          id: `chk_${report!.id}_${idx}_${Date.now()}`,
-          week: `Target ${currentList.length + idx + 1}`,
-          title: step.length > 50 ? (step.split('.')[0] || step.slice(0, 48)) + '...' : step,
-          description: step,
-          category: (idx % 2 === 0 ? 'COMMUNICATION' : 'TECHNICAL') as any,
-          isCompleted: false
-        }));
-
-        if (newItems.length > 0) {
-          const updated = [...currentList, ...newItems];
-          localStorage.setItem(`student_improvement_checklist_${sKey}`, JSON.stringify(updated));
-          window.dispatchEvent(new Event('storage'));
-        }
-      } catch (err) {
-        console.warn('Failed stacking report on checklist:', err);
-      }
-
       setIsEvaluationPending(false);
     }, 4500);
   };
 
-  const submitAnswer = async (answerText: string) => {
+  const submitAnswer = async (answerText: string, options?: { timeExpired?: boolean }) => {
     setInterviewState(prev => ({ ...prev, orbState: 'THINKING' }));
 
     const sessId = interviewState.sessionId || `ses_${Date.now()}`;
+    const targetTopic = activeAssignment?.domainOrTopic || activeAssignment?.title || student.track || student.department;
+
     try {
-      const res = await api.interview.submitAnswer(sessId, answerText);
+      const res = await api.interview.submitAnswer(sessId, answerText, 25, { topic: targetTopic, timeExpired: options?.timeExpired });
       if (res) {
         if (res.isCompleted && res.finalReport) {
           await completeAssessmentAwaitingEvaluation('MOCK_INTERVIEW', res.finalReport);
@@ -1426,7 +1410,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedQuestions[prev.turnIndex] = updatedQ;
 
       const nextTurn = prev.turnIndex + 1;
-      if (nextTurn >= prev.questions.length) {
+      const isCompleteLocal = (nextTurn >= 13) || (nextTurn >= prev.questions.length) || Boolean(options?.timeExpired);
+      if (isCompleteLocal) {
         setTimeout(() => endInterview(), 500);
         return {
           ...prev,
@@ -1438,8 +1423,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       let nextDifficulty: Difficulty = prev.currentDifficulty;
-      if (prev.currentDifficulty === 'EASY') nextDifficulty = 'MEDIUM';
-      else if (prev.currentDifficulty === 'MEDIUM') nextDifficulty = 'ADVANCED';
+      if (nextTurn >= 8) nextDifficulty = 'ADVANCED';
+      else if (nextTurn >= 3) nextDifficulty = 'MEDIUM';
 
       return {
         ...prev,

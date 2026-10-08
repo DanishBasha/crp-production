@@ -171,15 +171,32 @@ ownerRouter.post(
 
       // Check if email already registered as user
       const { rows: users } = await db.query(
-        `SELECT id FROM identity.users WHERE email = $1`,
+        `SELECT id, role, institution_id FROM identity.users WHERE LOWER(email) = $1`,
         [email]
       );
-      if (users.length > 0) {
-        throw new AppError(409, 'A user account with this email already exists', 'DUPLICATE_EMAIL');
+      if (users.length > 0 && users[0].role === 'PLATFORM_OWNER') {
+        throw new AppError(400, 'Cannot invite Platform Owner as college admin', 'INVALID_OPERATION');
       }
 
-      // Clean up any stale pending invite for this email so they can be re-invited
-      await db.query(`DELETE FROM identity.pending_invites WHERE email = $1`, [email]);
+      // Purge previous pending invites for this institution so the old admin's email is NOT stored
+      // User requirement: "if any one is reinvited the previous admins mail id should not be stored"
+      await db.query(`DELETE FROM identity.pending_invites WHERE institution_id = $1`, [institution.id]);
+      await db.query(`DELETE FROM identity.pending_invites WHERE LOWER(email) = $1`, [email]);
+
+      // If this institution had a prior super admin user (excluding Danish Platform Owner),
+      // purge the superseded admin user and role assignments so the previous admin's email is not stored in the database!
+      const { rows: prevAdmins } = await db.query(
+        `SELECT id, email FROM identity.users 
+         WHERE (institution_id = $1 OR id IN (SELECT user_id FROM identity.role_assignments WHERE institution_id = $1))
+           AND role = 'SUPER_ADMIN'
+           AND LOWER(email) != 'danishbasha18@gmail.com'
+           AND LOWER(email) != $2`,
+        [institution.id, email]
+      );
+      for (const prev of prevAdmins) {
+        await db.query(`DELETE FROM identity.role_assignments WHERE user_id = $1 AND institution_id = $2`, [prev.id, institution.id]);
+        await db.query(`DELETE FROM identity.users WHERE id = $1 AND institution_id = $2`, [prev.id, institution.id]);
+      }
 
       // Create invitation token
       const token = `inv_sup_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -253,15 +270,28 @@ ownerRouter.delete(
   async (req: Request, res: Response): Promise<void> => {
     const client = await db.connect();
     try {
-      const { collegeId } = req.params;
+      const collegeId = Array.isArray(req.params.collegeId) ? req.params.collegeId[0] : (req.params.collegeId || '');
 
-      const { rows: instRows } = await client.query(
-        `SELECT id, name FROM org.institutions WHERE id = $1`,
-        [collegeId]
-      );
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(collegeId);
+      let instRows: any[] = [];
+      if (isUuid) {
+        const { rows } = await client.query(
+          `SELECT id, name FROM org.institutions WHERE id = $1`,
+          [collegeId]
+        );
+        instRows = rows;
+      }
+      if (instRows.length === 0) {
+        const { rows } = await client.query(
+          `SELECT id, name FROM org.institutions WHERE UPPER(code) = UPPER($1) OR LOWER(name) = LOWER($1)`,
+          [collegeId]
+        );
+        instRows = rows;
+      }
       if (instRows.length === 0) {
         throw new AppError(404, 'Institution not found', 'NOT_FOUND');
       }
+      const targetInstitutionId = instRows[0].id;
 
       await client.query('BEGIN');
 
@@ -285,13 +315,14 @@ ownerRouter.delete(
          LEFT JOIN identity.users u ON u.id = s.user_id
          WHERE p.institution_id = $1
             OR pb.institution_id = $1
-            OR u.institution_id = $1`,
-        [collegeId]
+            OR u.institution_id = $1
+            OR s.college_id = $1`,
+        [targetInstitutionId]
       );
       const studentIds = studentRows.map(s => s.id);
       const studentUserIds = studentRows.map(s => s.user_id).filter(Boolean);
 
-      // 2. Identify all user IDs tied to this institution across all roles (students, admins, staff, faculty)
+      // 2. Identify all user IDs tied to this institution across all roles (students, admins, staff, faculty, self-registered)
       const { rows: usersRows } = await client.query<{ id: string; email: string }>(
         `SELECT DISTINCT u.id, u.email FROM identity.users u
          LEFT JOIN identity.role_assignments ra ON ra.user_id = u.id
@@ -307,10 +338,12 @@ ownerRouter.delete(
            OR pb.institution_id = $1
            OR ds.institution_id = $1
            OR u.id = ANY($2::uuid[])
+           OR LOWER(u.email) IN (SELECT LOWER(email) FROM identity.pending_invites WHERE institution_id = $1)
+           OR LOWER(u.email) IN (SELECT LOWER(email) FROM org.department_staff WHERE institution_id = $1)
          )
          AND u.role != 'PLATFORM_OWNER'
          AND LOWER(u.email) != 'danishbasha18@gmail.com'`,
-        [collegeId, studentUserIds]
+        [targetInstitutionId, studentUserIds]
       );
       const userIdsToDelete = [...new Set(usersRows.map(u => u.id))];
       const userEmailsToDelete = [...new Set(usersRows.map(u => u.email.toLowerCase()))];
@@ -320,7 +353,7 @@ ownerRouter.delete(
         `SELECT DISTINCT a.id FROM assessment.assessment_attempts a
          LEFT JOIN org.programs p ON p.id = a.program_id
          WHERE (a.student_id = ANY($1::uuid[]) OR p.institution_id = $2)`,
-        [studentIds, collegeId]
+        [studentIds, targetInstitutionId]
       );
       const attemptIds = attemptRows.map(a => a.id);
 
@@ -358,7 +391,7 @@ ownerRouter.delete(
         await safeQuery(`DELETE FROM performance.performance_profiles WHERE student_id = ANY($1::uuid[])`, [studentIds]);
         await safeQuery(`DELETE FROM credit.credit_transactions WHERE student_id = ANY($1::uuid[])`, [studentIds]);
         await safeQuery(`DELETE FROM credit.credit_accounts WHERE student_id = ANY($1::uuid[])`, [studentIds]);
-        await safeQuery(`DELETE FROM credit.credit_policies WHERE institution_id = $1 OR student_id = ANY($2::uuid[])`, [collegeId, studentIds]);
+        await safeQuery(`DELETE FROM credit.credit_policies WHERE institution_id = $1 OR student_id = ANY($2::uuid[])`, [targetInstitutionId, studentIds]);
         await safeQuery(`DELETE FROM placement.checklist_progress WHERE student_id = ANY($1::uuid[])`, [studentIds]);
         await safeQuery(`DELETE FROM placement.mentor_verifications WHERE student_id = ANY($1::uuid[]) OR mentor_user_id = ANY($2::uuid[])`, [studentIds, userIdsToDelete]);
         await safeQuery(`DELETE FROM placement.placement_eligibility WHERE student_id = ANY($1::uuid[])`, [studentIds]);
@@ -372,25 +405,25 @@ ownerRouter.delete(
          WHERE id = ANY($1::uuid[])
             OR user_id = ANY($2::uuid[])
             OR program_id IN (SELECT id FROM org.programs WHERE institution_id = $3)`,
-        [studentIds, userIdsToDelete, collegeId]
+        [studentIds, userIdsToDelete, targetInstitutionId]
       );
 
       // 7. Delete institution structure (subdivisions, batches, programs, departments, classes, staff, assignments)
       await safeQuery(`DELETE FROM org.trainer_subdivision_assignments WHERE trainer_user_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])`, [userIdsToDelete]);
-      await safeQuery(`DELETE FROM org.subdivisions WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $1)`, [collegeId]);
-      await safeQuery(`DELETE FROM org.batches WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $1)`, [collegeId]);
-      await safeQuery(`DELETE FROM org.programs WHERE institution_id = $1`, [collegeId]);
-      await safeQuery(`DELETE FROM org.interview_assignments WHERE institution_id = $1`, [collegeId]);
-      await safeQuery(`DELETE FROM org.trainer_tenures WHERE institution_id = $1`, [collegeId]);
-      await safeQuery(`DELETE FROM knowledge.knowledge_documents WHERE institution_id = $1`, [collegeId]);
-      await safeQuery(`DELETE FROM org.department_classes WHERE institution_id = $1`, [collegeId]);
-      await safeQuery(`DELETE FROM org.department_staff WHERE institution_id = $1 OR user_id = ANY($2::uuid[])`, [collegeId, userIdsToDelete]);
-      await safeQuery(`DELETE FROM org.departments WHERE institution_id = $1`, [collegeId]);
+      await safeQuery(`DELETE FROM org.subdivisions WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $1)`, [targetInstitutionId]);
+      await safeQuery(`DELETE FROM org.batches WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $1)`, [targetInstitutionId]);
+      await safeQuery(`DELETE FROM org.programs WHERE institution_id = $1`, [targetInstitutionId]);
+      await safeQuery(`DELETE FROM org.interview_assignments WHERE institution_id = $1`, [targetInstitutionId]);
+      await safeQuery(`DELETE FROM org.trainer_tenures WHERE institution_id = $1`, [targetInstitutionId]);
+      await safeQuery(`DELETE FROM knowledge.knowledge_documents WHERE institution_id = $1`, [targetInstitutionId]);
+      await safeQuery(`DELETE FROM org.department_classes WHERE institution_id = $1`, [targetInstitutionId]);
+      await safeQuery(`DELETE FROM org.department_staff WHERE institution_id = $1 OR user_id = ANY($2::uuid[])`, [targetInstitutionId, userIdsToDelete]);
+      await safeQuery(`DELETE FROM org.departments WHERE institution_id = $1`, [targetInstitutionId]);
       await safeQuery(`DELETE FROM org.faculty_profiles WHERE user_id = ANY($1::uuid[])`, [userIdsToDelete]);
 
       // 8. Delete invitations, roles, password resets, auth tokens, and users
-      await safeQuery(`DELETE FROM identity.pending_invites WHERE institution_id = $1 OR LOWER(email) = ANY($2::text[])`, [collegeId, userEmailsToDelete]);
-      await safeQuery(`DELETE FROM identity.role_assignments WHERE institution_id = $1 OR user_id = ANY($2::uuid[])`, [collegeId, userIdsToDelete]);
+      await safeQuery(`DELETE FROM identity.pending_invites WHERE institution_id = $1 OR LOWER(email) = ANY($2::text[])`, [targetInstitutionId, userEmailsToDelete]);
+      await safeQuery(`DELETE FROM identity.role_assignments WHERE institution_id = $1 OR user_id = ANY($2::uuid[])`, [targetInstitutionId, userIdsToDelete]);
 
       if (userEmailsToDelete.length > 0) {
         await safeQuery(`DELETE FROM identity.password_resets WHERE LOWER(email) = ANY($1::text[])`, [userEmailsToDelete]);
@@ -410,10 +443,10 @@ ownerRouter.delete(
         // Delete ALL users belonging to this college from identity.users (strictly protecting PLATFORM_OWNER)
         await client.query(
           `DELETE FROM identity.users 
-           WHERE (id = ANY($1::uuid[]) OR institution_id = $2)
+           WHERE (id = ANY($1::uuid[]) OR institution_id = $2 OR LOWER(email) = ANY($3::text[]))
              AND role != 'PLATFORM_OWNER' 
              AND LOWER(email) != 'danishbasha18@gmail.com'`,
-          [userIdsToDelete, collegeId]
+          [userIdsToDelete, targetInstitutionId, userEmailsToDelete]
         );
       } else {
         // In case there were users with institution_id directly set
@@ -422,12 +455,12 @@ ownerRouter.delete(
            WHERE institution_id = $1
              AND role != 'PLATFORM_OWNER' 
              AND LOWER(email) != 'danishbasha18@gmail.com'`,
-          [collegeId]
+          [targetInstitutionId]
         );
       }
 
       // 9. Delete the institution itself
-      await client.query(`DELETE FROM org.institutions WHERE id = $1`, [collegeId]);
+      await client.query(`DELETE FROM org.institutions WHERE id = $1`, [targetInstitutionId]);
 
       await client.query('COMMIT');
 

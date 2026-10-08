@@ -93,7 +93,7 @@ export const MockInterviewRoom: React.FC = () => {
       setSessionTimeLeft(prev => {
         if (prev <= 1) {
           clearInterval(timer);
-          handleExecuteSubmit();
+          handleExecuteSubmit(undefined, true);
           return 0;
         }
         return prev - 1;
@@ -307,7 +307,7 @@ export const MockInterviewRoom: React.FC = () => {
     }
   };
 
-  const handleExecuteSubmit = async (textToSubmit?: string) => {
+  const handleExecuteSubmit = async (textToSubmit?: string, timeExpired = false) => {
     if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
     setIsSubmitting(true);
@@ -344,7 +344,7 @@ export const MockInterviewRoom: React.FC = () => {
         : "I have implemented scalable architecture solutions using reactive patterns, distributed caching, and transactional consistency.");
 
     try {
-      await submitAnswer(finalAnswer);
+      await submitAnswer(finalAnswer, { timeExpired });
     } catch (err) {
       console.error("[MockInterview] Submit error:", err);
     } finally {
@@ -1005,11 +1005,15 @@ export const MockInterviewRoom: React.FC = () => {
           </div>
         </div>
       ) : (
-        /* Live Session: ONLY the running timer is displayed */
-        <div className="flex items-center justify-center">
+        /* Live Session: Running timer and Question Tracker */
+        <div className="flex flex-wrap items-center justify-center gap-3">
           <div className="flex items-center space-x-2 bg-neutral-900 text-white px-4 py-1.5 rounded-full text-xs font-mono font-medium shadow-2xs">
             <Clock className="w-3.5 h-3.5 text-neutral-300" />
             <span>Timer: {formatSessionTime(sessionTimeLeft)} / 25:00</span>
+          </div>
+          <div className="flex items-center space-x-2 bg-emerald-50 text-emerald-800 border border-emerald-300 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold shadow-2xs">
+            <span>Turn {questionNumber} of 13+</span>
+            <span className="text-[10px] text-emerald-600 font-normal hidden sm:inline">· {activeAssignment?.domainOrTopic || activeAssignment?.title || student?.track || 'Technical Assessment'}</span>
           </div>
         </div>
       )}
