@@ -96,7 +96,7 @@ export const AbandonSessionModal: React.FC = () => {
                   Current Balance: {student?.coins ?? 5} Coins
                 </p>
                 <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
-                  If your coins drop to 0, you must wait for the recharge cooldown or have your institution admin grant credit restoration.
+                  If your coins drop to 0, institutional students must have their College's Super Admin grant credit restoration; independent candidates must pay to refill lost credits.
                 </p>
               </div>
             </div>

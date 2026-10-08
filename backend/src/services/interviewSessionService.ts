@@ -226,12 +226,6 @@ export async function startLiveInterview(userId: string, _resumeInput?: ResumeIn
   const student = rows[0] ?? await createStudentForUser(userId);
   if (!student) throw new AppError(404, 'Student profile not found', 'NOT_FOUND');
 
-  // An empty wallet is refilled so a candidate is never blocked from practising
-  if ((await getCoins(student.id)).coins < 1) {
-    await db.query('UPDATE credit.credit_accounts SET balance = 50, updated_at = now() WHERE student_id = $1', [student.id])
-      .catch(() => {});
-    await db.query('UPDATE org.students SET coins = 5, updated_at = now() WHERE id = $1', [student.id]).catch(() => {});
-  }
   const { attemptId, sessionId } = await createAttemptAndSession(student);
   let coinsRemaining: number;
   try {

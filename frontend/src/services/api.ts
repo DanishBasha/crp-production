@@ -1735,6 +1735,33 @@ class ApiClient {
     }
   };
 
+  coins = {
+    getMe: async (): Promise<{ coins: number; maxCoins: number; isIndependent: boolean; institutionId: string | null }> => {
+      const res = await this._fetch<{ data: { coins: number; maxCoins: number; isIndependent: boolean; institutionId: string | null } }>('/coins/me');
+      return res.data;
+    },
+    restore: async (studentId: string, coins = 5): Promise<{ studentId: string; coins: number; maxCoins: number; message: string }> => {
+      const res = await this._fetch<{ data: { studentId: string; coins: number; maxCoins: number; message: string } }>(
+        `/coins/${encodeURIComponent(studentId)}/restore`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ coins }),
+        }
+      );
+      return res.data;
+    },
+    payRefill: async (payload: { paymentMethod?: string; transactionReference?: string } = {}): Promise<{ coins: number; maxCoins: number; message: string }> => {
+      const res = await this._fetch<{ data: { coins: number; maxCoins: number; message: string } }>(
+        '/coins/me/pay-refill',
+        {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }
+      );
+      return res.data;
+    },
+  };
+
   interview = {
     start: async (
       studentId: string, 

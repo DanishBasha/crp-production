@@ -182,6 +182,7 @@ interface AppContextType {
   restoreSessionCoin: () => void;
   forfeitSessionCoin: () => void;
   restoreStudentCoinsToFive: (studentId: string) => Promise<void>;
+  payRefillCoins: () => Promise<void>;
   simulateElapsedCooldown: (studentId: string) => void;
   toggleCriteriaTask: (taskId: string) => Promise<void>;
   verifyCriteriaTask: (taskId: string) => Promise<void>;
@@ -744,24 +745,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [sessionCoinAtStake, setSessionCoinAtStake] = useState<boolean>(false);
 
-  // Regains credit up until 5 (capped at 5) upon successful completion without disqualification
+  // Strict coins rule: a spent coin is consumed. Finishing a session does not grant free coins.
   const restoreSessionCoin = () => {
-    setStudent(prev => {
-      const current = prev.coins ?? 0;
-      // Regains spent 1 coin and earns 1 bonus credit towards 5 (capped at 5)
-      const nextCoins = Math.min(5, current + 2);
-      const sKey = prev.id || 'stu-candidate';
-      try {
-        localStorage.setItem(`crp_student_coins_${sKey}`, String(nextCoins));
-        if (nextCoins > 0) {
-          localStorage.removeItem(`crp_zero_coins_time_${sKey}`);
-        }
-      } catch {}
-      if (prev.id) {
-        api.student.updateCredits(prev.id, { coins: nextCoins }).catch(() => {});
-      }
-      return { ...prev, coins: nextCoins, zeroCoinsAt: undefined };
-    });
     setSessionCoinAtStake(false);
   };
 
@@ -817,7 +802,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveView('DASHBOARD');
   };
 
-  // Only Super Admin can restore all 5 credits when institutional student goes to 0
+  // Only College Super Admin can restore all 5 credits for institutional students
   const restoreStudentCoinsToFive = async (studentId: string) => {
     try {
       localStorage.setItem(`crp_student_coins_${studentId}`, '5');
@@ -839,8 +824,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     try {
-      await api.student.updateCredits(studentId, { coins: 5, action: 'RESTORE' });
-    } catch {}
+      await api.coins.restore(studentId, 5);
+    } catch (err) {
+      console.warn('[AppContext] api.coins.restore error, trying updateCredits:', err);
+      try {
+        await api.student.updateCredits(studentId, { coins: 5, action: 'RESTORE' });
+      } catch (innerErr) {
+        console.error('[AppContext] Failed to restore credits:', innerErr);
+        throw innerErr;
+      }
+    }
 
     try {
       await api.studentBatch.updateStudentDetails(currentUser?.collegeId || 'col-1', studentId, {
@@ -851,46 +844,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     logger.info('SUPER_ADMIN', `Super Admin restored all 5 credits for student ${studentId}`);
   };
 
-  // Test / simulation helper for 3-day wait period
-  const simulateElapsedCooldown = (studentId: string) => {
-    const pastTime = Date.now() - (4 * 24 * 60 * 60 * 1000); // 4 days ago
+  // Independent candidate pays to refill lost credits
+  const payRefillCoins = async () => {
+    await api.coins.payRefill();
+    setStudent(prev => ({ ...prev, coins: 5, zeroCoinsAt: undefined }));
+    const sKey = student.id || 'stu-candidate';
     try {
-      localStorage.setItem(`crp_zero_coins_time_${studentId}`, String(pastTime));
+      localStorage.setItem(`crp_student_coins_${sKey}`, '5');
+      localStorage.removeItem(`crp_zero_coins_time_${sKey}`);
     } catch {}
-    restoreStudentCoinsToFive(studentId);
+    logger.info('CANDIDATE', 'Independent candidate paid to refill 5 credits');
   };
 
-  // 3-Day wait period cooldown check for individually registered students
-  useEffect(() => {
-    const checkIndependentCooldown = () => {
-      const isIndep = student.isIndependent || currentUser?.isIndependent || student.department?.includes('Independent') || student.track === 'EXTERNAL';
-      if (isIndep && student.coins === 0) {
-        const sKey = student.id || 'stu-21cs1084';
-        const zeroStored = localStorage.getItem(`crp_zero_coins_time_${sKey}`);
-        if (zeroStored) {
-          const zeroTimestamp = parseInt(zeroStored, 10);
-          const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-          if (!isNaN(zeroTimestamp) && Date.now() - zeroTimestamp >= THREE_DAYS_MS) {
-            setStudent(prev => {
-              const prevKey = prev.id || 'stu-21cs1084';
-              try {
-                localStorage.setItem(`crp_student_coins_${prevKey}`, '5');
-                localStorage.removeItem(`crp_zero_coins_time_${prevKey}`);
-              } catch {}
-              return { ...prev, coins: 5, zeroCoinsAt: undefined };
-            });
-            logger.info('STUDENT', `3-day cooldown elapsed: Replenished 5 credits for independent student ${sKey}`);
-          }
-        } else {
-          localStorage.setItem(`crp_zero_coins_time_${sKey}`, String(Date.now()));
-        }
-      }
-    };
+  const simulateElapsedCooldown = (_studentId: string) => {};
 
-    checkIndependentCooldown();
-    const timer = setInterval(checkIndependentCooldown, 5000);
-    return () => clearInterval(timer);
-  }, [student.isIndependent, student.department, student.track, student.coins, student.id]);
+  // Strict coin policy: Independent candidates must pay to refill lost credits (no free 3-day automatic replenishment)
+  useEffect(() => {
+    // If student has 0 coins, ensure zero timestamp is recorded for tracking
+    if ((student.coins ?? 5) === 0) {
+      const sKey = student.id || 'stu-candidate';
+      if (!localStorage.getItem(`crp_zero_coins_time_${sKey}`)) {
+        localStorage.setItem(`crp_zero_coins_time_${sKey}`, String(Date.now()));
+      }
+    }
+  }, [student.coins, student.id]);
   const [trainerTenures, setTrainerTenures] = useState<TrainerTenure[]>([]);
   const [assignments, setAssignments] = useState<InterviewAssignment[]>([]);
   const [activeAssignment, setActiveAssignment] = useState<InterviewAssignment | null>(null);
@@ -2142,6 +2119,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       restoreSessionCoin,
       forfeitSessionCoin,
       restoreStudentCoinsToFive,
+      payRefillCoins,
       simulateElapsedCooldown,
       toggleCriteriaTask,
       verifyCriteriaTask,

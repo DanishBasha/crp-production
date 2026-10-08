@@ -717,19 +717,40 @@ studentRouter.get(
 // ── PATCH /api/students/:studentId/credits ───────────────────────────────────
 studentRouter.patch(
   '/:studentId/credits',
-  async (req: Request, res: Response): Promise<void> => {
+  authenticate,
+  async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const studentId = paramStr(req.params.studentId);
       const { coins, action } = req.body;
 
-      const { rows: studentRows } = await db.query(
-        `SELECT id, user_id, coins FROM org.students WHERE id = $1`,
+      const { rows: studentRows } = await db.query<{ id: string; user_id: string; coins: number; institution_id: string | null }>(
+        `SELECT s.id, s.user_id, s.coins, u.institution_id
+         FROM org.students s
+         JOIN identity.users u ON u.id = s.user_id
+         WHERE s.id = $1 OR s.user_id = $1`,
         [studentId]
       );
       if (studentRows.length === 0) {
         throw new AppError(404, 'Student not found', 'NOT_FOUND');
       }
       const student = studentRows[0];
+
+      if (action === 'RESTORE') {
+        // Strict authorization: only College Super Admin or Platform Owner can restore institutional credits
+        if (req.user!.role !== 'SUPER_ADMIN' && req.user!.role !== 'PLATFORM_OWNER') {
+          throw new AppError(403, "Only a College's Super Admin can restore credits for an institutional student.", 'FORBIDDEN');
+        }
+        if (!student.institution_id) {
+          throw new AppError(
+            400,
+            "This candidate is an independent candidate. College Super Admins can only restore credits for their institutional students. Independent candidates must pay to refill credits.",
+            'INDEPENDENT_CANDIDATE'
+          );
+        }
+        if (req.user!.role !== 'PLATFORM_OWNER' && student.institution_id !== req.user!.institutionId) {
+          throw new AppError(403, 'You can only restore credits for students enrolled in your college.', 'FORBIDDEN');
+        }
+      }
 
       let nextCoins = typeof coins === 'number' ? Math.max(0, coins) : (student.coins ?? 5);
       if (action === 'CONSUME') {
@@ -741,7 +762,7 @@ studentRouter.patch(
       // 1. Update org.students
       await db.query(
         `UPDATE org.students SET coins = $1, updated_at = now() WHERE id = $2`,
-        [nextCoins, studentId]
+        [nextCoins, student.id]
       );
 
       // 2. Update candidate.independent_candidates if present
@@ -759,11 +780,11 @@ studentRouter.patch(
         `INSERT INTO credit.credit_accounts (student_id, balance)
          VALUES ($1, $2)
          ON CONFLICT (student_id) DO UPDATE SET balance = EXCLUDED.balance, updated_at = now()`,
-        [studentId, nextCoins * 10]
+        [student.id, nextCoins * 10]
       ).catch(() => {});
 
       sendSuccess(res, {
-        studentId,
+        studentId: student.id,
         coins: nextCoins,
         message: 'Credit balance updated and persisted in database'
       });

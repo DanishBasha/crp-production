@@ -19,6 +19,7 @@ import { ownerRouter } from './owner.routes';
 import { collegeRouter } from './college.routes';
 import { invitesRouter } from './invites.routes';
 import { studentBatchRouter } from './studentBatch.routes';
+import { coinsRouter } from './coins.routes';
 
 // Module 2 & 4 routers
 import { assessmentsRouter } from '../modules/assessments/assessments.routes';
@@ -80,4 +81,5 @@ router.use('/learning', authenticate, learningRouter);
 router.use('/owner', authenticate, ownerRouter);
 router.use('/college', authenticate, collegeRouter);
 router.use('/studentBatch', authenticate, studentBatchRouter);
+router.use('/coins', authenticate, coinsRouter);
 

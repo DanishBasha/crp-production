@@ -49,6 +49,7 @@ export const StudentDashboard: React.FC = () => {
     isAssignmentDisqualified,
     simulateElapsedCooldown,
     restoreStudentCoinsToFive,
+    payRefillCoins,
     isEvaluationPending,
     newReportNotification,
     dismissNewReportNotification
@@ -124,14 +125,18 @@ export const StudentDashboard: React.FC = () => {
   const handleProcessPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     setPaymentProcessing(true);
-    await new Promise(r => setTimeout(r, 1000));
-    await restoreStudentCoinsToFive(student.id || 'stu-candidate');
-    setPaymentProcessing(false);
-    setPaymentSuccess(true);
-    setTimeout(() => {
-      setPaymentSuccess(false);
-      setPaymentModalOpen(false);
-    }, 1200);
+    try {
+      await payRefillCoins();
+      setPaymentProcessing(false);
+      setPaymentSuccess(true);
+      setTimeout(() => {
+        setPaymentSuccess(false);
+        setPaymentModalOpen(false);
+      }, 1200);
+    } catch (err: any) {
+      setPaymentProcessing(false);
+      alert(err?.message || 'Payment processing failed. Please try again.');
+    }
   };
 
   // Coding Handles state
@@ -827,34 +832,28 @@ export const StudentDashboard: React.FC = () => {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-start space-x-3.5">
                   <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center shrink-0 mt-0.5">
-                    <Clock className="w-5 h-5" />
+                    <CreditCard className="w-5 h-5" />
                   </div>
                   <div>
                     <div className="flex items-center space-x-2">
-                      <h3 className="text-sm font-bold text-amber-300">0 Credits Available — 3-Day Waiting Period Active</h3>
+                      <h3 className="text-sm font-bold text-amber-300">0 Credits Available — Balance Exhausted</h3>
                       <span className="px-2 py-0.5 text-[10px] font-mono bg-amber-400 text-neutral-950 font-bold rounded-full uppercase">
                         Independent Candidate
                       </span>
                     </div>
                     <p className="text-xs text-neutral-300 mt-1 leading-relaxed">
-                      You have exhausted your credits. Individually registered students must wait a period of <strong>3 days (72 hours)</strong> to automatically regain all 5 credits.
+                      You have exhausted your interview credits. Independent candidates must pay to refill credits to continue taking mock interviews and assessments.
                     </p>
-                    <div className="flex items-center space-x-2 mt-2 font-mono text-xs">
-                      <span className="text-neutral-400">Regeneration countdown:</span>
-                      <span className="px-2.5 py-1 bg-black/60 rounded-lg text-amber-300 font-bold border border-amber-500/30">
-                        ⏳ {formatCooldown(cooldownRemainingMs)}
-                      </span>
-                    </div>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setPaymentModalOpen(true)}
                   className="px-4 py-2.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-neutral-950 font-bold rounded-xl text-xs flex items-center space-x-2 shrink-0 shadow-md transition-all cursor-pointer"
-                  title="Independent candidates: Bypass 3-day waiting period through payment"
+                  title="Independent candidate: Pay to refill 5 credits"
                 >
                   <CreditCard className="w-4 h-4" />
-                  <span>Refill 5 Credits ($4.99 / ₹399)</span>
+                  <span>Pay to Refill 5 Credits ($4.99 / ₹399)</span>
                 </button>
               </div>
             </div>
@@ -868,11 +867,11 @@ export const StudentDashboard: React.FC = () => {
                   <div className="flex items-center space-x-2">
                     <h3 className="text-sm font-bold text-rose-300">0 Credits Available — Balance Exhausted</h3>
                     <span className="px-2 py-0.5 text-[10px] font-mono bg-rose-400 text-neutral-950 font-bold rounded-full uppercase">
-                      Institutional Candidate
+                      Institutional Student
                     </span>
                   </div>
                   <p className="text-xs text-neutral-300 mt-1">
-                    0 credits remaining. Contact your Super Admin to restore credits.
+                    0 credits remaining. Your credits can only be restored by your College's Super Admin. Please contact your college administrator.
                   </p>
                 </div>
               </div>
@@ -1966,7 +1965,7 @@ export const StudentDashboard: React.FC = () => {
                     <span className="text-sm font-bold font-mono text-amber-900">₹399 / $4.99</span>
                   </div>
                   <p className="text-[11px] text-amber-800 leading-relaxed">
-                    Bypass the 3-day wait window. Restores full balance of 5 coins for practice interviews and listening comprehension.
+                    Instantly restores full balance of 5 credits for practice mock interviews and assessments.
                   </p>
                 </div>
 

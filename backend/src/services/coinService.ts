@@ -37,23 +37,7 @@ async function balanceOf(studentId: string): Promise<number> {
     'SELECT balance FROM credit.credit_accounts WHERE student_id = $1',
     [studentId]
   );
-  let bal = Number(rows[0]?.balance ?? 0);
-  if (bal < 10) {
-    try {
-      await db.query(
-        'UPDATE credit.credit_accounts SET balance = 50, updated_at = now() WHERE student_id = $1',
-        [studentId]
-      );
-      await db.query(
-        'UPDATE org.students SET coins = 5, updated_at = now() WHERE id = $1',
-        [studentId]
-      );
-      bal = 50;
-    } catch (err) {
-      console.warn('[coinService] auto-replenish error:', err);
-    }
-  }
-  return bal;
+  return Number(rows[0]?.balance ?? 0);
 }
 
 export async function getCoins(studentId: string): Promise<{ coins: number; maxCoins: number }> {
@@ -65,28 +49,33 @@ export async function getCoins(studentId: string): Promise<{ coins: number; maxC
 export async function spendCoin(studentId: string, reference: string): Promise<number> {
   const [balance, price] = await Promise.all([balanceOf(studentId), coinPrice()]);
   if (balance < price) {
-    throw new AppError(402, 'You have no coins left. Coins are restored by your administrator.', 'INSUFFICIENT_COINS');
+    const { rows } = await db.query<{ institution_id: string | null }>(
+      `SELECT u.institution_id FROM org.students s JOIN identity.users u ON u.id = s.user_id WHERE s.id = $1`,
+      [studentId]
+    );
+    const isInstitutional = Boolean(rows[0]?.institution_id);
+    const message = isInstitutional
+      ? "You have run out of interview credits. Please contact your College's Super Admin to restore your credits."
+      : "You have run out of interview credits. Please pay to refill your credits to continue.";
+    throw new AppError(402, message, 'INSUFFICIENT_COINS');
   }
   const { newBalance } = await CreditService.consume(studentId, price, SPEND_REASON, reference);
-  return toCoins(newBalance, price);
+  const remaining = toCoins(newBalance, price);
+  await db.query('UPDATE org.students SET coins = $1, updated_at = now() WHERE id = $2', [remaining, studentId]).catch(() => {});
+  await db.query(
+    'UPDATE candidate.independent_candidates SET credits = $1, zero_credits_at = (CASE WHEN $1 = 0 THEN now() ELSE NULL END), updated_at = now() WHERE user_id = (SELECT user_id FROM org.students WHERE id = $2)',
+    [remaining, studentId]
+  ).catch(() => {});
+  return remaining;
 }
 
 /**
- * Fair completion of a charged session: the spent coin back plus a bonus, never above
- * MAX_COINS. Sessions that were never charged (e.g. staff-recorded attempts) earn nothing,
- * and each session is rewarded at most once.
+ * Fair completion of a charged session: spent coins are consumed and gone.
+ * Completing a session does not award bonus coins (strict coin policy).
  */
-export async function rewardCompletion(studentId: string, reference: string): Promise<number> {
+export async function rewardCompletion(studentId: string, _reference: string): Promise<number> {
   const price = await coinPrice();
-  const { rows } = await db.query(
-    `SELECT 1 FROM credit.credit_transactions
-     WHERE student_id = $1 AND reference_id::text = $2 AND transaction_type = 'CONSUME' AND reference_type = $3`,
-    [studentId, reference, SPEND_REASON]
-  );
-  if (rows.length === 0) return toCoins(await balanceOf(studentId), price);
-  const { newBalance } = await CreditService.earn(
-    studentId, price * COMPLETION_REWARD_COINS, REWARD_REASON, reference, price * MAX_COINS);
-  return toCoins(newBalance, price);
+  return toCoins(await balanceOf(studentId), price);
 }
 
 /** Gives back the coin of a session that never really started (e.g. a server error). */
