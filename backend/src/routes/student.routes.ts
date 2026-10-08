@@ -11,6 +11,7 @@ import { Events } from '../shared/events/events';
 import { authenticate, AuthRequest } from '../middleware/authenticate';
 import { requireRole, requireStudentSelfOrStaff } from '../middleware/authorize';
 import { env } from '../config/env';
+import axios from 'axios';
 
 export const studentRouter = Router();
 
@@ -548,4 +549,132 @@ studentRouter.post(
     }
   }
 );
+
+// ── GET /api/students/leetcode/:username ─────────────────────────────────────
+studentRouter.get(
+  '/leetcode/:username',
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const username = paramStr(req.params.username).trim();
+      if (!username) {
+        throw new AppError(400, 'LeetCode username is required', 'BAD_REQUEST');
+      }
+
+      const graphqlQuery = {
+        query: `
+          query userProblemsSolved($username: String!) {
+            allQuestionsCount {
+              difficulty
+              count
+            }
+            matchedUser(username: $username) {
+              username
+              submitStatsGlobal {
+                acSubmissionNum {
+                  difficulty
+                  count
+                }
+              }
+            }
+          }
+        `,
+        variables: { username }
+      };
+
+      const response = await axios.post('https://leetcode.com/graphql', graphqlQuery, {
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://leetcode.com',
+        },
+        timeout: 10000,
+      });
+
+      const matched = response.data?.data?.matchedUser;
+      if (!matched) {
+        throw new AppError(404, `LeetCode profile "${username}" not found or is private.`, 'USER_NOT_FOUND');
+      }
+
+      const stats = matched.submitStatsGlobal?.acSubmissionNum || [];
+      const totalSolved = stats.find((s: any) => s.difficulty === 'All')?.count || 0;
+      const easySolved = stats.find((s: any) => s.difficulty === 'Easy')?.count || 0;
+      const mediumSolved = stats.find((s: any) => s.difficulty === 'Medium')?.count || 0;
+      const hardSolved = stats.find((s: any) => s.difficulty === 'Hard')?.count || 0;
+
+      sendSuccess(res, {
+        username: matched.username,
+        totalSolved,
+        easySolved,
+        mediumSolved,
+        hardSolved
+      });
+    } catch (err: any) {
+      if (err.response?.status === 404 || err.code === 'USER_NOT_FOUND') {
+        sendError(res, new AppError(404, `LeetCode profile not found`, 'NOT_FOUND'));
+      } else {
+        sendError(res, err);
+      }
+    }
+  }
+);
+
+// ── PATCH /api/students/:studentId/credits ───────────────────────────────────
+studentRouter.patch(
+  '/:studentId/credits',
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const studentId = paramStr(req.params.studentId);
+      const { coins, action } = req.body;
+
+      const { rows: studentRows } = await db.query(
+        `SELECT id, user_id, coins FROM org.students WHERE id = $1`,
+        [studentId]
+      );
+      if (studentRows.length === 0) {
+        throw new AppError(404, 'Student not found', 'NOT_FOUND');
+      }
+      const student = studentRows[0];
+
+      let nextCoins = typeof coins === 'number' ? Math.max(0, coins) : (student.coins ?? 5);
+      if (action === 'CONSUME') {
+        nextCoins = Math.max(0, (student.coins ?? 5) - 1);
+      } else if (action === 'RESTORE') {
+        nextCoins = 5;
+      }
+
+      // 1. Update org.students
+      await db.query(
+        `UPDATE org.students SET coins = $1, updated_at = now() WHERE id = $2`,
+        [nextCoins, studentId]
+      );
+
+      // 2. Update candidate.independent_candidates if present
+      await db.query(
+        `UPDATE candidate.independent_candidates 
+         SET credits = $1, 
+             zero_credits_at = (CASE WHEN $1 = 0 THEN now() ELSE NULL END),
+             updated_at = now() 
+         WHERE user_id = $2`,
+        [nextCoins, student.user_id]
+      ).catch(() => {});
+
+      // 3. Update credit.credit_accounts
+      await db.query(
+        `INSERT INTO credit.credit_accounts (student_id, balance)
+         VALUES ($1, $2)
+         ON CONFLICT (student_id) DO UPDATE SET balance = EXCLUDED.balance, updated_at = now()`,
+        [studentId, nextCoins]
+      ).catch(() => {});
+
+      sendSuccess(res, {
+        studentId,
+        coins: nextCoins,
+        message: 'Credit balance updated and persisted in database'
+      });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
 

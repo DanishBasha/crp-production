@@ -22,18 +22,28 @@ ownerRouter.get('/colleges', async (_req: Request, res: Response): Promise<void>
         i.code,
         i.type AS campus_city,
         i.created_at,
-        COALESCE(sa.email, inv.email) AS super_admin_email,
-        COALESCE(sa.name, inv.name) AS super_admin_name,
+        COALESCE(u_admin.email, sa.email, inv.email) AS super_admin_email,
+        COALESCE(u_admin.name, sa.name, inv.name) AS super_admin_name,
         CASE
+          WHEN u_admin.id IS NOT NULL AND u_admin.status = 'ACTIVE' THEN 'ACTIVE'
           WHEN sa.id IS NOT NULL AND sa.status = 'ACTIVE' THEN 'ACTIVE'
           WHEN inv.id IS NOT NULL AND inv.status = 'PENDING' THEN 'PENDING_INVITE'
           ELSE 'NO_ADMIN'
         END AS super_admin_status
       FROM org.institutions i
       LEFT JOIN LATERAL (
+        SELECT u.id, u.email, u.name, u.status
+        FROM identity.users u
+        LEFT JOIN identity.role_assignments ra ON ra.user_id = u.id
+        WHERE (u.institution_id = i.id OR ra.institution_id = i.id)
+          AND u.role = 'SUPER_ADMIN'
+        ORDER BY u.created_at DESC
+        LIMIT 1
+      ) u_admin ON true
+      LEFT JOIN LATERAL (
         SELECT inv_a.email, u.name, u.id, u.status
         FROM identity.pending_invites inv_a
-        JOIN identity.users u ON u.email = inv_a.email
+        JOIN identity.users u ON LOWER(u.email) = LOWER(inv_a.email)
         WHERE inv_a.institution_id = i.id
           AND inv_a.role = 'SUPER_ADMIN'
           AND inv_a.status = 'ACCEPTED'

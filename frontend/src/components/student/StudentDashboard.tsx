@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
+import { api } from '../../services/api';
 import { InterviewAssignment, ImprovementChecklistItem } from '../../types';
 import { 
   Mic, 
@@ -158,22 +159,18 @@ export const StudentDashboard: React.FC = () => {
     setFetchingLcStats(true);
     setFetchStatsMessage(null);
     try {
-      const res = await fetch(`https://leetcode-stats-api.herokuapp.com/${lcUsername.trim()}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.status === 'success' && typeof data.totalSolved === 'number') {
-          setLcSolvedCount(data.totalSolved);
-          setFetchStatsMessage(`Found ${data.totalSolved} solved problems on LeetCode!`);
-          setFetchingLcStats(false);
-          return;
-        }
+      const stats = await api.student.fetchLeetCodeStats(lcUsername.trim());
+      if (typeof stats.totalSolved === 'number') {
+        setLcSolvedCount(stats.totalSolved);
+        setFetchStatsMessage(`Verified LeetCode Profile: ${stats.totalSolved} solved (Easy: ${stats.easySolved}, Medium: ${stats.mediumSolved}, Hard: ${stats.hardSolved})`);
+      } else {
+        throw new Error('Could not parse LeetCode solved statistics.');
       }
-    } catch {}
-    // Fallback if public proxy is unreachable or rate limited
-    const fallbackCount = lcSolvedCount > 0 ? lcSolvedCount : 48;
-    setLcSolvedCount(fallbackCount);
-    setFetchStatsMessage(`Connected @${lcUsername.trim()} (${fallbackCount} solved).`);
-    setFetchingLcStats(false);
+    } catch (err: any) {
+      setFetchStatsMessage(err?.message || 'LeetCode profile not found or private. Please check the username.');
+    } finally {
+      setFetchingLcStats(false);
+    }
   };
 
   // Live fetch GitHub public repository count

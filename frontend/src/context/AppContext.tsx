@@ -120,7 +120,7 @@ interface AppContextType {
   loginUser: (email: string, password: string) => Promise<void>;
   loginWithAuthUser: (authUser: AuthUser, token?: string) => void;
   registerUser: (data: any) => Promise<void>;
-  registerCandidate: (data: { name: string; email: string; password?: string }) => Promise<void>;
+  registerCandidate: (data: { name: string; email: string; password?: string }) => Promise<any>;
   registerInstitution: (data: {
     institutionName: string;
     institutionCode: string;
@@ -734,6 +734,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           localStorage.removeItem(`crp_zero_coins_time_${sKey}`);
         }
       } catch {}
+      if (prev.id) {
+        api.student.updateCredits(prev.id, { coins: nextCoins }).catch(() => {});
+      }
       return { ...prev, coins: nextCoins, zeroCoinsAt: undefined };
     });
     setSessionCoinAtStake(false);
@@ -811,6 +814,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return prev;
     });
+
+    try {
+      await api.student.updateCredits(studentId, { coins: 5, action: 'RESTORE' });
+    } catch {}
 
     try {
       await api.studentBatch.updateStudentDetails(currentUser?.collegeId || 'col-1', studentId, {
@@ -1179,6 +1186,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         localStorage.setItem(`crp_zero_coins_time_${sKey}`, String(Date.now()));
       }
     } catch {}
+    if (student.id) {
+      api.student.updateCredits(student.id, { coins: remainingCoins, action: 'CONSUME' }).catch(() => {});
+    }
     setStudent(prev => ({ 
       ...prev, 
       coins: remainingCoins,
@@ -1706,16 +1716,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const registerCandidate = async (data: { name: string; email: string; password?: string }) => {
     const res = await api.auth.registerCandidate(data);
-    loginWithAuthUser(res.user, res.token);
-    try {
-      const prof = await api.student.getProfile(res.studentId);
-      if (prof) {
-        setStudent(prof);
-        setLatestReport(null);
-      }
-    } catch (err) {
-      console.warn('Profile fetch after candidate register:', err);
-    }
+    return res;
   };
 
   const registerInstitution = async (data: {

@@ -1366,7 +1366,7 @@ class ApiClient {
 
     registerCandidate: async (candidateData: { name: string; email: string; password?: string; collegeId?: string; department?: string; batchYear?: number }) => {
       const password = candidateData.password || 'welcome@2026';
-      const res = await this._fetch<{ data: { token: string; user: any; studentId?: string } }>('/auth/register-candidate', {
+      const res = await this._fetch<{ data: { message: string; requiresLogin: boolean; email: string; name: string; studentId?: string } }>('/auth/register-candidate', {
         method: 'POST',
         body: JSON.stringify({
           name: candidateData.name || 'Candidate',
@@ -1378,15 +1378,7 @@ class ApiClient {
         }),
       });
 
-      const { token, user, studentId } = res.data;
-      this.setToken(token);
-      localStorage.setItem('auth_user', JSON.stringify({ ...user, studentId }));
-
-      return {
-        user: { ...user, studentId: studentId || user.studentId },
-        token,
-        studentId: studentId || user.studentId
-      };
+      return res.data;
     },
 
     register: async (userData: any) => {
@@ -1420,15 +1412,19 @@ class ApiClient {
     registerExternal: async (userData: { name: string; email: string; password?: string; department?: string; batchYear?: number }) => {
       const res = await this.auth.registerCandidate(userData);
       return {
-        message: 'Registration verification code generated',
-        email: userData.email,
+        ...res,
         simulatedVerificationCode: '123456',
-        ...res
       };
     },
 
     verifyEmail: async (email: string, _code: string) => {
-      return this.auth.registerCandidate({ name: email.split('@')[0], email });
+      const res = await this.auth.registerCandidate({ name: email.split('@')[0], email });
+      return {
+        user: { id: res.studentId || 'ext-stu', name: res.name, email: res.email, role: 'STUDENT' },
+        studentId: res.studentId,
+        token: 'ext-token',
+        ...res
+      };
     },
 
     requestPasswordReset: async (email: string) => {
@@ -1568,6 +1564,24 @@ class ApiClient {
         method: 'POST',
         body: JSON.stringify(handles),
       });
+    },
+
+    fetchLeetCodeStats: async (username: string): Promise<{ username: string; totalSolved: number; easySolved: number; mediumSolved: number; hardSolved: number }> => {
+      const res = await this._fetch<{ data: { username: string; totalSolved: number; easySolved: number; mediumSolved: number; hardSolved: number } }>(
+        `/students/leetcode/${encodeURIComponent(username)}`
+      );
+      return res.data;
+    },
+
+    updateCredits: async (studentId: string, payload: { coins?: number; action?: 'CONSUME' | 'RESTORE' }): Promise<{ coins: number }> => {
+      const res = await this._fetch<{ data: { studentId: string; coins: number; message: string } }>(
+        `/students/${encodeURIComponent(studentId)}/credits`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(payload)
+        }
+      );
+      return { coins: res.data.coins };
     },
 
     uploadResume: async (

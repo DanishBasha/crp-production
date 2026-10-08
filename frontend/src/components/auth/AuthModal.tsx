@@ -116,11 +116,18 @@ export const AuthModal: React.FC = () => {
     setError(null);
     setLoading(true);
     try {
-      await registerCandidate({
+      const res: any = await registerCandidate({
         name: regName.trim(),
         email: regEmail.trim(),
         password: regPassword
       });
+      setEmail(regEmail.trim());
+      setPassword('');
+      setRegPassword('');
+      setRegConfirmPassword('');
+      setActiveTab('LOGIN');
+      setSuccessMsg(res?.message || 'Registration successful! Please sign in with your credentials to access the portal.');
+      setError(null);
     } catch (err: any) {
       setError(err?.message || 'Registration failed. Please try again.');
     } finally {

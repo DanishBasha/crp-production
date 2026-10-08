@@ -187,40 +187,59 @@ authRouter.post('/register-candidate', async (req: Request, res: Response): Prom
       batchId = newBatch[0].id;
     }
 
+    // Check if email is already in use
+    const { rows: existingUsers } = await client.query(
+      `SELECT id FROM identity.users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+      [email]
+    );
+    if (existingUsers.length > 0) {
+      throw new AppError(409, 'An account with this email address already exists. Please sign in.', 'EMAIL_ALREADY_EXISTS');
+    }
+
     // 4. Hash password
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // 5. Upsert into identity.users
+    // 5. Insert into identity.users (strictly prevent duplicates)
     const { rows: userRows } = await client.query<{ id: string; name: string; email: string; role: UserRole; token_version: number }>(
       `INSERT INTO identity.users (name, email, password_hash, role, token_version, status, institution_id)
        VALUES ($1, $2, $3, 'STUDENT', 0, 'ACTIVE', $4)
-       ON CONFLICT (email) DO UPDATE SET
-         name = EXCLUDED.name,
-         password_hash = EXCLUDED.password_hash,
-         status = 'ACTIVE',
-         institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
        RETURNING id, name, email, role, token_version`,
-      [name, email, passwordHash, instId]
+      [name, email.toLowerCase(), passwordHash, instId]
     );
     const user = userRows[0];
 
-    // 6. Ensure student record exists in org.students
+    // 6. Ensure independent candidate record is persisted in candidate.independent_candidates
+    await client.query(
+      `INSERT INTO candidate.independent_candidates (user_id, name, email, credits, status)
+       VALUES ($1, $2, $3, 5, 'ACTIVE')
+       ON CONFLICT (user_id) DO UPDATE SET
+         name = EXCLUDED.name,
+         email = EXCLUDED.email,
+         credits = COALESCE(candidate.independent_candidates.credits, 5)`,
+      [user.id, name, email.toLowerCase()]
+    ).catch(() => {});
+
+    // 7. Ensure student record exists in org.students with 5 coins/credits
     const actualRoll = rollNumber || `22CS${Math.floor(1000 + Math.random() * 9000)}`;
     const { rows: studentRows } = await client.query<{ id: string }>(
       `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track, coins, overall_readiness)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 5, 75)
        ON CONFLICT (user_id) DO UPDATE SET
-         program_id = COALESCE(org.students.program_id, EXCLUDED.program_id),
-         batch_id = COALESCE(org.students.batch_id, EXCLUDED.batch_id),
-         department = COALESCE(org.students.department, EXCLUDED.department),
-         batch_year = COALESCE(org.students.batch_year, EXCLUDED.batch_year),
-         track = COALESCE(org.students.track, EXCLUDED.track)
+         coins = COALESCE(org.students.coins, 5)
        RETURNING id`,
       [user.id, progId, batchId, actualRoll, department, batchYear, track]
     );
     const studentId = studentRows[0].id;
 
-    // 7. Role assignment
+    // 8. Ensure credit account exists in credit.credit_accounts with 5 credits
+    await client.query(
+      `INSERT INTO credit.credit_accounts (student_id, balance)
+       VALUES ($1, 5)
+       ON CONFLICT (student_id) DO UPDATE SET balance = COALESCE(credit.credit_accounts.balance, 5)`,
+      [studentId]
+    ).catch(() => {});
+
+    // 9. Role assignment
     await client.query(
       `INSERT INTO identity.role_assignments (user_id, role_id, institution_id, program_id, batch_id, scope_type, is_active)
        SELECT $1, id, $2, $3, $4, 'BATCH', true FROM identity.roles WHERE name = 'STUDENT'
@@ -230,31 +249,12 @@ authRouter.post('/register-candidate', async (req: Request, res: Response): Prom
 
     await client.query('COMMIT');
 
-    const authUser: AuthUser = {
-      id: user.id,
-      email: user.email,
-      role: 'STUDENT',
-      name: user.name,
-      tokenVersion: user.token_version || 0,
-    };
-    const token = signToken(authUser);
-
+    // Registration is strictly for registering — candidate must now sign in through login modal
     sendSuccess(res, {
-      token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: 'STUDENT',
-        studentId,
-        rollNumber: actualRoll,
-        collegeId: instId,
-        collegeName: instName,
-        department,
-        batchYear,
-        track,
-        programName,
-      },
+      message: 'Candidate registration successful! Please sign in with your email and password to access the portal.',
+      requiresLogin: true,
+      email: user.email,
+      name: user.name,
       studentId
     }, 201);
   } catch (err) {
@@ -290,39 +290,42 @@ authRouter.post('/register-institution', async (req: Request, res: Response): Pr
   try {
     await client.query('BEGIN');
 
-    // 1. Get or create institution
-    let instRow: { id: string; name: string; code: string; campus_city: string; created_at: string };
+    // Check if administrator email is already registered
+    const { rows: existingUser } = await client.query(
+      `SELECT id FROM identity.users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+      [adminEmail]
+    );
+    if (existingUser.length > 0) {
+      throw new AppError(409, 'An account with this administrator email already exists. Please sign in or use another email.', 'EMAIL_ALREADY_EXISTS');
+    }
+
+    // Check if institution code or name already exists
     const { rows: existingInst } = await client.query(
-      `SELECT id, name, code, type AS campus_city, created_at FROM org.institutions WHERE UPPER(code) = $1 OR LOWER(name) = LOWER($2) LIMIT 1`,
+      `SELECT id FROM org.institutions WHERE UPPER(code) = $1 OR LOWER(name) = LOWER($2) LIMIT 1`,
       [institutionCode, institutionName]
     );
-
     if (existingInst.length > 0) {
-      instRow = existingInst[0];
-    } else {
-      const { rows: newInst } = await client.query(
-        `INSERT INTO org.institutions (name, code, type, is_active)
-         VALUES ($1, $2, $3, true)
-         RETURNING id, name, code, type AS campus_city, created_at`,
-        [institutionName, institutionCode, campusCity]
-      );
-      instRow = newInst[0];
+      throw new AppError(409, 'An institution with this code or name already exists. Please choose a unique name and code.', 'DUPLICATE_CODE');
     }
+
+    // 1. Create institution
+    const { rows: newInst } = await client.query(
+      `INSERT INTO org.institutions (name, code, type, is_active)
+       VALUES ($1, $2, $3, true)
+       RETURNING id, name, code, type AS campus_city, created_at`,
+      [institutionName, institutionCode, campusCity]
+    );
+    const instRow = newInst[0];
 
     // 2. Hash admin password
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // 3. Upsert admin user as SUPER_ADMIN
-    const { rows: userRows } = await client.query(
-      `INSERT INTO identity.users (name, email, password_hash, role, status)
-       VALUES ($1, $2, $3, 'SUPER_ADMIN', 'ACTIVE')
-       ON CONFLICT (email) DO UPDATE SET
-         name = EXCLUDED.name,
-         password_hash = EXCLUDED.password_hash,
-         role = 'SUPER_ADMIN',
-         status = 'ACTIVE'
-       RETURNING id, name, email, role, token_version, status`,
-      [adminName, adminEmail, passwordHash]
+    // 3. Insert admin user as SUPER_ADMIN linked to this institution
+    const { rows: userRows } = await client.query<{ id: string; name: string; email: string; role: UserRole; token_version: number; status: string; institution_id: string }>(
+      `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
+       VALUES ($1, $2, $3, 'SUPER_ADMIN', 'ACTIVE', $4)
+       RETURNING id, name, email, role, token_version, status, institution_id`,
+      [adminName, adminEmail.toLowerCase(), passwordHash, instRow.id]
     );
     const user = userRows[0];
 
