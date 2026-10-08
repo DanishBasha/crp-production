@@ -407,8 +407,7 @@ ownerRouter.delete(
          LEFT JOIN identity.users u ON u.id = s.user_id
          WHERE p.institution_id = $1
             OR pb.institution_id = $1
-            OR u.institution_id = $1
-            OR s.college_id = $1`,
+            OR u.institution_id = $1`,
         [targetInstitutionId]
       );
       const studentIds = studentRows.map(s => s.id);
@@ -496,12 +495,19 @@ ownerRouter.delete(
         `DELETE FROM org.students
          WHERE id = ANY($1::uuid[])
             OR user_id = ANY($2::uuid[])
-            OR program_id IN (SELECT id FROM org.programs WHERE institution_id = $3)`,
+            OR program_id IN (SELECT id FROM org.programs WHERE institution_id = $3)
+            OR batch_id IN (SELECT id FROM org.batches WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $3))`,
         [studentIds, userIdsToDelete, targetInstitutionId]
       );
 
       // 7. Delete institution structure (subdivisions, batches, programs, departments, classes, staff, assignments)
-      await safeQuery(`DELETE FROM org.trainer_subdivision_assignments WHERE trainer_user_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])`, [userIdsToDelete]);
+      await safeQuery(
+        `DELETE FROM org.trainer_subdivision_assignments 
+         WHERE trainer_user_id = ANY($1::uuid[]) 
+            OR assigned_by = ANY($1::uuid[])
+            OR subdivision_id IN (SELECT id FROM org.subdivisions WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $2))`,
+        [userIdsToDelete, targetInstitutionId]
+      );
       await safeQuery(`DELETE FROM org.subdivisions WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $1)`, [targetInstitutionId]);
       await safeQuery(`DELETE FROM org.batches WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $1)`, [targetInstitutionId]);
       await safeQuery(`DELETE FROM org.programs WHERE institution_id = $1`, [targetInstitutionId]);
@@ -527,13 +533,14 @@ ownerRouter.delete(
         await safeQuery(`UPDATE agent.agent_runs SET triggered_by_user_id = NULL WHERE triggered_by_user_id::text = ANY($1::text[])`, [userIdsToDelete]);
         await safeQuery(`DELETE FROM agent.agent_runs WHERE student_id = ANY($1::uuid[]) OR triggered_by_user_id::text = ANY($2::text[])`, [studentIds, userIdsToDelete]);
 
-        // Clear auth sessions (handling varchar/uuid data types cleanly via ::text)
+        // Clear auth sessions and independent candidate records
         await safeQuery(`DELETE FROM auth.sessions WHERE user_id::text = ANY($1::text[])`, [userIdsToDelete]);
         await safeQuery(`DELETE FROM auth.refresh_tokens WHERE user_id::text = ANY($1::text[])`, [userIdsToDelete]);
         await safeQuery(`DELETE FROM auth.identities WHERE user_id::text = ANY($1::text[])`, [userIdsToDelete]);
+        await safeQuery(`DELETE FROM candidate.independent_candidates WHERE user_id = ANY($1::uuid[])`, [userIdsToDelete]);
 
         // Delete ALL users belonging to this college from identity.users (strictly protecting PLATFORM_OWNER)
-        await client.query(
+        await safeQuery(
           `DELETE FROM identity.users 
            WHERE (id = ANY($1::uuid[]) OR institution_id = $2 OR LOWER(email) = ANY($3::text[]))
              AND role != 'PLATFORM_OWNER' 
@@ -542,7 +549,7 @@ ownerRouter.delete(
         );
       } else {
         // In case there were users with institution_id directly set
-        await client.query(
+        await safeQuery(
           `DELETE FROM identity.users 
            WHERE institution_id = $1
              AND role != 'PLATFORM_OWNER' 
@@ -550,6 +557,9 @@ ownerRouter.delete(
           [targetInstitutionId]
         );
       }
+
+      // Unlink any remaining users with this institution_id (such as super admin or platform owner)
+      await safeQuery(`UPDATE identity.users SET institution_id = NULL WHERE institution_id = $1`, [targetInstitutionId]);
 
       // 9. Delete the institution itself
       await client.query(`DELETE FROM org.institutions WHERE id = $1`, [targetInstitutionId]);

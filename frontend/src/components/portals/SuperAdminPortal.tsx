@@ -82,6 +82,10 @@ export const SuperAdminPortal: React.FC = () => {
   const [selectedProgramToEdit, setSelectedProgramToEdit] = useState<DynamicProgram | null>(null);
   const [safeguardDeleteModal, setSafeguardDeleteModal] = useState<{ isOpen: boolean; program: DynamicProgram | null }>({ isOpen: false, program: null });
   const [safeguardInput, setSafeguardInput] = useState('');
+  const [safeguardError, setSafeguardError] = useState<string | null>(null);
+  const [isSafeguardDeleting, setIsSafeguardDeleting] = useState(false);
+  const [deptDeleteError, setDeptDeleteError] = useState<string | null>(null);
+  const [isDeptDeleting, setIsDeptDeleting] = useState(false);
 
   const [createDeptModal, setCreateDeptModal] = useState(false);
   const [bulkDeptModal, setBulkDeptModal] = useState(false);
@@ -426,15 +430,27 @@ export const SuperAdminPortal: React.FC = () => {
   const executeSafeguardDelete = async () => {
     if (!safeguardDeleteModal.program) return;
     const prog = safeguardDeleteModal.program;
+    const cleanInput = safeguardInput.trim().toLowerCase();
+    const cleanName = prog.name.trim().toLowerCase();
+    if (cleanInput !== cleanName && cleanInput !== 'confirm_modify') {
+      setSafeguardError(`Please type "${prog.name}" or "CONFIRM_MODIFY" to verify deletion.`);
+      return;
+    }
+
+    setIsSafeguardDeleting(true);
+    setSafeguardError(null);
     try {
-      await api.college.deleteProgram(collegeId, prog.id, safeguardInput);
+      await api.college.deleteProgram(collegeId, prog.id, safeguardInput.trim());
       logger.info('PROGRAM', `Program deleted: ${prog.name} (${prog.code})`);
       setFeedback({ type: 'success', message: `Program "${prog.name}" has been permanently removed.` });
       setSafeguardDeleteModal({ isOpen: false, program: null });
       setSafeguardInput('');
+      setSafeguardError(null);
       await loadData();
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err?.message || 'Safeguard verification failed.' });
+      setSafeguardError(err?.message || 'Safeguard verification failed.');
+    } finally {
+      setIsSafeguardDeleting(false);
     }
   };
 
@@ -509,17 +525,22 @@ export const SuperAdminPortal: React.FC = () => {
   const handleConfirmDeleteDept = async () => {
     if (!deleteDeptModal.department) return;
     const dept = deleteDeptModal.department;
+    setIsDeptDeleting(true);
+    setDeptDeleteError(null);
     try {
       await api.college.deleteDepartment(collegeId, dept.id);
       logger.info('DEPT', `Department deleted: ${dept.name} (${dept.code})`);
       setFeedback({ type: 'success', message: `Department "${dept.name}" removed.` });
       setDeleteDeptModal({ isOpen: false, department: null });
+      setDeptDeleteError(null);
       if (selectedDeptForProgress?.id === dept.id) {
         setSelectedDeptForProgress(null);
       }
       await loadData();
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err?.message || 'Failed to delete department.' });
+      setDeptDeleteError(err?.message || 'Failed to delete department.');
+    } finally {
+      setIsDeptDeleting(false);
     }
   };
 
@@ -1292,6 +1313,8 @@ export const SuperAdminPortal: React.FC = () => {
                                   onClick={() => {
                                     setSafeguardDeleteModal({ isOpen: true, program: prog });
                                     setSafeguardInput('');
+                                    setSafeguardError(null);
+                                    setIsSafeguardDeleting(false);
                                   }}
                                   className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                                   title="Delete Program"
@@ -2314,29 +2337,42 @@ export const SuperAdminPortal: React.FC = () => {
               To verify deletion, type <span className="font-mono font-bold select-all">{safeguardDeleteModal.program.name}</span> or <span className="font-mono font-bold select-all">CONFIRM_MODIFY</span> below:
             </div>
 
+            {safeguardError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 flex items-center space-x-2 animate-in fade-in">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{safeguardError}</span>
+              </div>
+            )}
+
             <input
               type="text"
               placeholder="Type confirmation here..."
               value={safeguardInput}
-              onChange={(e) => setSafeguardInput(e.target.value)}
-              className="w-full px-3 py-2 bg-neutral-50 border border-neutral-200 rounded-xl font-mono focus:outline-none focus:border-red-600"
+              disabled={isSafeguardDeleting}
+              onChange={(e) => {
+                setSafeguardInput(e.target.value);
+                if (safeguardError) setSafeguardError(null);
+              }}
+              className="w-full px-3 py-2 bg-neutral-50 border border-neutral-200 rounded-xl font-mono focus:outline-none focus:border-red-600 disabled:opacity-50"
             />
 
             <div className="flex items-center justify-end space-x-2 pt-2">
               <button
                 type="button"
+                disabled={isSafeguardDeleting}
                 onClick={() => setSafeguardDeleteModal({ isOpen: false, program: null })}
-                className="px-4 py-2 border border-neutral-200 text-neutral-600 rounded-xl hover:bg-neutral-50 font-medium cursor-pointer"
+                className="px-4 py-2 border border-neutral-200 text-neutral-600 rounded-xl hover:bg-neutral-50 font-medium cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={executeSafeguardDelete}
-                disabled={!safeguardInput.trim()}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-medium shadow-xs disabled:opacity-50 cursor-pointer"
+                disabled={isSafeguardDeleting || !safeguardInput.trim()}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-medium shadow-xs disabled:opacity-50 cursor-pointer flex items-center space-x-1.5"
               >
-                Verify &amp; Delete
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isSafeguardDeleting ? 'Deleting Track...' : 'Verify & Delete'}</span>
               </button>
             </div>
           </div>
@@ -2539,21 +2575,30 @@ export const SuperAdminPortal: React.FC = () => {
               <p>Removing this department will unlist its administrative entry. Students enrolled under this department will keep their test histories and profiles intact.</p>
             </div>
 
+            {deptDeleteError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 flex items-center space-x-2 animate-in fade-in">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{deptDeleteError}</span>
+              </div>
+            )}
+
             <div className="flex items-center justify-end space-x-2 pt-2">
               <button
                 type="button"
+                disabled={isDeptDeleting}
                 onClick={() => setDeleteDeptModal({ isOpen: false, department: null })}
-                className="px-4 py-2 border border-neutral-200 text-neutral-600 rounded-xl hover:bg-neutral-50 font-medium cursor-pointer"
+                className="px-4 py-2 border border-neutral-200 text-neutral-600 rounded-xl hover:bg-neutral-50 font-medium cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleConfirmDeleteDept}
-                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-semibold shadow-xs cursor-pointer flex items-center space-x-1.5"
+                disabled={isDeptDeleting}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-semibold shadow-xs cursor-pointer flex items-center space-x-1.5 disabled:opacity-50"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>Remove Department</span>
+                <span>{isDeptDeleting ? 'Removing Department...' : 'Remove Department'}</span>
               </button>
             </div>
           </div>

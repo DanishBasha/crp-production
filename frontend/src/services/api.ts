@@ -1114,9 +1114,16 @@ class ApiClient {
       return res.data;
     },
 
-    deleteProgram: async (collegeId: string, progId: string, safeguardCode?: string): Promise<{ success: boolean }> => {
-      await this._fetch(`/college/${collegeId}/programs/${progId}`, { method: 'DELETE' });
-      return { success: true };
+    deleteProgram: async (collegeId: string, progId: string, safeguardCode?: string): Promise<{ success: boolean; message?: string }> => {
+      const q = safeguardCode ? `?safeguardCode=${encodeURIComponent(safeguardCode)}` : '';
+      const res = await this._fetch<{ data?: { success: boolean; message?: string } }>(
+        `/college/${collegeId}/programs/${progId}${q}`,
+        {
+          method: 'DELETE',
+          body: safeguardCode ? JSON.stringify({ safeguardCode }) : undefined,
+        }
+      );
+      return res.data || { success: true };
     },
 
     inviteProgramAdmin: async (collegeId: string, data: { firstName: string; lastName: string; email: string; programId?: string; department?: string; permissions: AdminPermission[] }): Promise<{ invite: PendingInvite; inviteUrl: string }> => {
