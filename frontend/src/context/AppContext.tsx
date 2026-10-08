@@ -91,6 +91,8 @@ interface InterviewSessionState {
   orbState: 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
   liveTranscript: string;
   isCompletedAwaitingEvaluation?: boolean;
+  /** Planned number of turns when the server drives the interview (questions grow one at a time). */
+  totalTurns?: number;
 }
 
 export interface ImpersonationSession {
@@ -144,6 +146,19 @@ interface AppContextType {
   interviewState: InterviewSessionState;
   startInterview: (type?: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION') => Promise<void>;
   submitAnswer: (answerText: string, options?: { timeExpired?: boolean }) => Promise<void>;
+  applyLiveInterviewTurn: (turn: {
+    transcript: string;
+    technicalScore: number;
+    communicationScore: number;
+    feedback: string;
+    strengths: string;
+    weaknesses: string;
+    nextDifficulty: Difficulty;
+    nextQuestionText: string;
+    paceWpm?: number;
+    fillerCount?: number;
+    keyPointsMissed?: string[];
+  }) => void;
   endInterview: () => Promise<void>;
   completeAssessmentAwaitingEvaluation: (type: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION', finalReport?: DiagnosticReport | null) => Promise<void>;
   isEvaluationPending: boolean;
@@ -309,16 +324,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const getInitialView = (): AppView => {
     if (typeof window === 'undefined') return 'DASHBOARD';
     const params = new URLSearchParams(window.location.search);
-    const hash = window.location.hash;
-    const tokenFromSearch = params.get('invite_token');
-    let tokenFromHash: string | null = null;
-    if (hash.includes('invite_token=')) {
-      const match = hash.match(/invite_token=([^&]+)/);
-      tokenFromHash = match ? match[1] : null;
+    const hash = window.location.hash || '';
+    let token = params.get('invite_token') || params.get('token') || params.get('activateToken') || params.get('code') || params.get('inv');
+    if (!token && hash) {
+      const qIndex = hash.indexOf('?');
+      if (qIndex !== -1) {
+        const hashParams = new URLSearchParams(hash.slice(qIndex + 1));
+        token = hashParams.get('invite_token') || hashParams.get('token') || hashParams.get('activateToken') || hashParams.get('code') || hashParams.get('inv');
+      } else {
+        const match = hash.match(/(?:invite_token|token|activateToken|code|inv)=([^&]+)/);
+        if (match) token = match[1];
+      }
     }
-    const token = tokenFromSearch || tokenFromHash;
     if (token) {
-      try { sessionStorage.setItem('crp_pending_invite_token', token); } catch {}
+      const cleaned = decodeURIComponent(token.trim());
+      try { 
+        sessionStorage.setItem('crp_pending_invite_token', cleaned); 
+        localStorage.setItem('crp_pending_invite_token', cleaned);
+      } catch {}
     }
     if (params.get('page') === 'activate' || token || hash.includes('activate')) {
       return 'ACTIVATE_INVITE';
@@ -1208,7 +1231,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const targetTopic = activeAssignment?.domainOrTopic || activeAssignment?.title || student.track || student.department;
 
     try {
-      const data = await api.interview.start(student.id || 'stu-21cs1084', type, targetTopic);
+      const data = await api.interview.start(student.id || 'stu-21cs1084', type, targetTopic, student.resume);
       setInterviewState({
         isActive: true,
         sessionId: data.sessionId,
@@ -1221,7 +1244,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isDisqualified: false,
         orbState: 'SPEAKING',
         liveTranscript: '',
-        isCompletedAwaitingEvaluation: false
+        isCompletedAwaitingEvaluation: false,
+        totalTurns: data.maxTurns || 15
       });
     } catch (err) {
       console.warn('[AppContext] Interview start fallback to dynamic session:', err);
@@ -1248,7 +1272,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isDisqualified: false,
         orbState: 'SPEAKING',
         liveTranscript: '',
-        isCompletedAwaitingEvaluation: false
+        isCompletedAwaitingEvaluation: false,
+        totalTurns: 15
       });
     }
   };
@@ -1434,6 +1459,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         questions: updatedQuestions,
         orbState: 'SPEAKING',
         liveTranscript: ''
+      };
+    });
+  };
+
+  const applyLiveInterviewTurn = (turn: {
+    transcript: string;
+    technicalScore: number;
+    communicationScore: number;
+    feedback: string;
+    strengths: string;
+    weaknesses: string;
+    nextDifficulty: Difficulty;
+    nextQuestionText: string;
+    paceWpm?: number;
+    fillerCount?: number;
+    keyPointsMissed?: string[];
+  }) => {
+    setInterviewState(previous => {
+      const current = previous.questions[previous.turnIndex];
+      if (!current) return previous;
+      const evaluated: QuestionTurn = {
+        ...current,
+        studentAnswer: turn.transcript,
+        technicalScore: turn.technicalScore,
+        communicationScore: turn.communicationScore,
+        feedback: turn.feedback,
+        strengths: turn.strengths,
+        weaknesses: turn.weaknesses,
+        wpm: turn.paceWpm,
+        fillerWords: turn.fillerCount,
+        keyPointsMissed: turn.keyPointsMissed,
+      };
+      const questions = [...previous.questions];
+      questions[previous.turnIndex] = evaluated;
+
+      // The live gateway is authoritative: an empty next question means it has
+      // completed the session, otherwise it supplies the next adaptive prompt.
+      if (!turn.nextQuestionText) {
+        return { ...previous, questions, orbState: 'IDLE', liveTranscript: '', isCompletedAwaitingEvaluation: true };
+      }
+      const next: QuestionTurn = {
+        id: `live_q_${previous.turnIndex + 2}_${Date.now()}`,
+        questionNumber: previous.turnIndex + 2,
+        questionText: turn.nextQuestionText,
+        difficulty: turn.nextDifficulty,
+      };
+      return {
+        ...previous,
+        questions: [...questions, next],
+        turnIndex: previous.turnIndex + 1,
+        currentDifficulty: turn.nextDifficulty,
+        orbState: 'SPEAKING',
+        liveTranscript: '',
       };
     });
   };
@@ -1985,6 +2063,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       interviewState,
       startInterview,
       submitAnswer,
+      applyLiveInterviewTurn,
       endInterview,
       completeAssessmentAwaitingEvaluation,
       isEvaluationPending,

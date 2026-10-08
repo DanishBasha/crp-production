@@ -186,13 +186,6 @@ export const UserProfilePage: React.FC = () => {
 
           <div className="flex items-center gap-2 self-start sm:self-auto">
             <button
-              onClick={() => setActiveView('DASHBOARD')}
-              className="px-4 py-2 bg-neutral-900 hover:bg-black text-white rounded-xl text-xs font-semibold transition-colors flex items-center space-x-1.5 cursor-pointer shadow-xs"
-            >
-              <LayoutDashboard className="w-3.5 h-3.5" />
-              <span>Open Dashboard</span>
-            </button>
-            <button
               onClick={requestSignOut}
               className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-semibold transition-colors flex items-center space-x-1.5 cursor-pointer"
             >

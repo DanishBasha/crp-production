@@ -357,15 +357,6 @@ export const AssessmentSubmissionsPage: React.FC = () => {
                             <Eye className="w-3.5 h-3.5" />
                             <span>Activity</span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => openStudentDashboard(sub.studentId)}
-                            className="px-2.5 py-1 text-xs font-semibold text-neutral-800 hover:text-black bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors cursor-pointer inline-flex items-center space-x-1"
-                            title="Open student full interactive Dashboard"
-                          >
-                            <LayoutDashboard className="w-3.5 h-3.5 text-neutral-600" />
-                            <span>Dashboard</span>
-                          </button>
                         </div>
                       </td>
                     </tr>

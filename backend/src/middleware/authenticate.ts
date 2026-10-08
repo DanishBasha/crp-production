@@ -54,3 +54,12 @@ export const authenticate = async (
     next(err);
   }
 };
+
+export function verifyAccessToken(token: string): JWTPayload {
+  try {
+    return jwt.verify(token, env.JWT_SECRET) as JWTPayload;
+  } catch (err) {
+    const code = err instanceof jwt.TokenExpiredError ? 'TOKEN_EXPIRED' : 'TOKEN_INVALID';
+    throw new AppError(401, 'Invalid or expired token', code);
+  }
+}

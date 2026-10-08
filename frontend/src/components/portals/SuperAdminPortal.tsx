@@ -912,25 +912,13 @@ export const SuperAdminPortal: React.FC = () => {
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => openAdminDashboard({
-                      role: 'PROGRAM_ADMIN',
-                      name: selectedProgramProfile.program.assignedAdminName || 'Program Administrator',
-                      email: selectedProgramProfile.program.assignedAdminEmail || 'admin.cloud@college.edu',
-                      programName: selectedProgramProfile.program.name,
-                      collegeId: currentUser?.collegeId
-                    })}
-                    className="p-3 bg-blue-50/70 hover:bg-blue-100/80 rounded-xl border border-blue-200 text-xs space-y-1 sm:text-right transition-all cursor-pointer group shadow-2xs hover:shadow-xs"
-                    title="Open Program Admin Dashboard"
-                  >
-                    <span className="text-[10px] text-blue-600 block uppercase font-mono font-semibold">Assigned Lead Admin · Click to open</span>
-                    <div className="font-bold text-neutral-900 group-hover:text-blue-700 flex items-center sm:justify-end space-x-1">
+                  <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 text-xs space-y-1 sm:text-right">
+                    <span className="text-[10px] text-neutral-500 block uppercase font-mono font-semibold">Assigned Lead Admin</span>
+                    <div className="font-bold text-neutral-900 flex items-center sm:justify-end space-x-1">
                       <span>{selectedProgramProfile.program.assignedAdminName || 'Lead Mentor'}</span>
-                      <ExternalLink className="w-3 h-3 text-blue-500" />
                     </div>
-                    <div className="text-[11px] font-mono text-neutral-500">{selectedProgramProfile.program.assignedAdminEmail || 'Open Dashboard'}</div>
-                  </button>
+                    <div className="text-[11px] font-mono text-neutral-500">{selectedProgramProfile.program.assignedAdminEmail || 'Not Assigned'}</div>
+                  </div>
                 </div>
 
                 {/* 4 Program Telemetry KPI Boxes */}
@@ -1037,7 +1025,6 @@ export const SuperAdminPortal: React.FC = () => {
                         <th className="py-3 px-4">Department</th>
                         <th className="py-3 px-4">Sub-Track</th>
                         <th className="py-3 px-4">Readiness Score</th>
-                        <th className="py-3 px-4 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-200/60">
@@ -1046,14 +1033,7 @@ export const SuperAdminPortal: React.FC = () => {
                         .map(s => (
                           <tr key={s.id} className="hover:bg-neutral-50/50">
                             <td className="py-3 px-4 font-semibold text-neutral-900">
-                              <button
-                                type="button"
-                                onClick={() => openStudentDashboard(s)}
-                                className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer font-bold"
-                                title={`Open ${s.name}'s Student Dashboard`}
-                              >
-                                {s.name}
-                              </button>
+                              <span>{s.name}</span>
                             </td>
                             <td className="py-3 px-4 font-mono text-neutral-500">{s.rollNumber || '—'}</td>
                             <td className="py-3 px-4 text-neutral-700">{s.department}</td>
@@ -1066,17 +1046,6 @@ export const SuperAdminPortal: React.FC = () => {
                               <span className={`font-bold ${(s.score || 0) >= 75 ? 'text-emerald-600' : 'text-neutral-900'}`}>
                                 {s.score || 0}%
                               </span>
-                            </td>
-                            <td className="py-3 px-4 text-right">
-                              <button
-                                type="button"
-                                onClick={() => openStudentDashboard(s)}
-                                className="px-2.5 py-1 text-xs bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg cursor-pointer inline-flex items-center space-x-1 font-semibold"
-                                title={`Open ${s.name}'s Student Dashboard`}
-                              >
-                                <LayoutDashboard className="w-3 h-3 text-neutral-600" />
-                                <span>Open Dashboard</span>
-                              </button>
                             </td>
                           </tr>
                         ))}
@@ -1600,7 +1569,7 @@ export const SuperAdminPortal: React.FC = () => {
               setAssignModalOpen(true);
             }}
             title="Institutional Student Candidate Roster"
-            subtitle="Click any candidate row or Dashboard button to open their live interactive Student Dashboard."
+            subtitle="View student performance and assessment history."
           />
         </div>
       )}

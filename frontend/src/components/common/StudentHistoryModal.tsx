@@ -137,18 +137,6 @@ export const StudentHistoryModal: React.FC<StudentHistoryModalProps> = ({
           </div>
           <div className="flex items-center space-x-2">
             <button
-              type="button"
-              onClick={() => {
-                onClose();
-                openStudentDashboard(student.id || targetId);
-              }}
-              className="px-3 py-1.5 bg-neutral-900 hover:bg-black text-white rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer shadow-xs"
-              title="Open full interactive Student Dashboard"
-            >
-              <LayoutDashboard className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Open Student Dashboard</span>
-            </button>
-            <button
               onClick={onClose}
               className="text-neutral-400 hover:text-neutral-700 p-1.5 rounded-lg hover:bg-neutral-200 transition-colors cursor-pointer"
             >

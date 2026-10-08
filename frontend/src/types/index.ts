@@ -135,6 +135,8 @@ export interface QuestionTurn {
   feedback?: string;
   strengths?: string;
   weaknesses?: string;
+  // Rubric points this answer missed (live interview)
+  keyPointsMissed?: string[];
 }
 
 export interface DiagnosticReport {

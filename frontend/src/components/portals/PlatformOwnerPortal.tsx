@@ -551,25 +551,6 @@ export const PlatformOwnerPortal: React.FC = () => {
                   }`}>
                     {profileCollege.superAdminStatus === 'ACTIVE' ? 'Active Account' : 'Invite Pending'}
                   </span>
-                  {profileCollege.superAdminEmail && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProfileCollege(null);
-                        openAdminDashboard({
-                          role: 'SUPER_ADMIN',
-                          name: profileCollege.superAdminName || 'Super Admin',
-                          email: profileCollege.superAdminEmail || 'superadmin@college.edu',
-                          collegeId: profileCollege.id,
-                          collegeName: profileCollege.name
-                        });
-                      }}
-                      className="px-3 py-1.5 bg-neutral-900 hover:bg-black text-white text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer shadow-xs"
-                    >
-                      <LayoutDashboard className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Open Dashboard</span>
-                    </button>
-                  )}
                 </div>
               </div>
 

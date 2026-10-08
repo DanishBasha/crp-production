@@ -6,8 +6,38 @@ import { sendSuccess, sendError } from '../shared/helpers/response';
 import { AuthRequest } from '../middleware/authenticate';
 import { eventBus } from '../shared/events/eventBus';
 import { Events, AttemptCompletedPayload } from '../shared/events/events';
+import { startLiveInterview } from '../services/interviewSessionService';
 
 export const interviewRouter = Router();
+
+// ── Live interview start schema ───────────────────────────────────────────────
+const startLiveSessionSchema = z.object({
+  sessionType: z.literal('MOCK_INTERVIEW').default('MOCK_INTERVIEW'),
+  topic: z.string().optional(),
+  resume: z.object({
+    skills: z.array(z.string().max(80)).max(40).optional(),
+    projects: z.array(z.object({
+      title: z.string().max(200),
+      techStack: z.array(z.string().max(80)).max(20).optional(),
+      description: z.string().max(1000).optional(),
+    })).max(10).optional(),
+  }).optional(),
+});
+
+// ── POST /api/interview/sessions — Start live voice interview session ────────
+interviewRouter.post('/sessions', async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const parsed = startLiveSessionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(422, 'Only MOCK_INTERVIEW sessions can be started here', 'VALIDATION_ERROR');
+    }
+    const session = await startLiveInterview(req.user!.id, parsed.data.resume, parsed.data.topic);
+    console.log(`[interview] Live session started sessionId=${session.sessionId} attemptId=${session.attemptId}`);
+    sendSuccess(res, session, 201);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
 
 // ── Validation schemas ────────────────────────────────────────────────────────
 

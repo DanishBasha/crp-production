@@ -70,12 +70,13 @@ export class CreditService {
     }
   }
 
-  // Award credits. Caps at max_balance from global policy.
+  // Award credits. Caps at max_balance from global policy, or optional explicit cap.
   static async earn(
     studentId: string,
     amount: number,
     reason: string,
-    referenceId: string
+    referenceId: string,
+    cap?: number
   ): Promise<EarnResult> {
     const idempotencyKey = ikey(`earn:${studentId}:${reason}:${referenceId}`);
     const client = await db.connect();
@@ -102,10 +103,11 @@ export class CreditService {
         `SELECT max_balance FROM credit.credit_policies
          WHERE scope_type = 'GLOBAL' AND is_active = TRUE ORDER BY created_at ASC LIMIT 1`
       );
-      const maxBalance = policies.length > 0 && policies[0].max_balance !== null
+      const policyMax = policies.length > 0 && policies[0].max_balance !== null
         ? Number(policies[0].max_balance) : Infinity;
+      const effectiveCap = typeof cap === 'number' ? Math.min(cap, policyMax) : policyMax;
 
-      const newBalance = Math.min(Number(accounts[0].balance) + amount, maxBalance);
+      const newBalance = Math.min(Number(accounts[0].balance) + amount, effectiveCap);
 
       await client.query(
         'UPDATE credit.credit_accounts SET balance = $1, updated_at = now() WHERE id = $2',

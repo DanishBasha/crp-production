@@ -32,9 +32,12 @@ invitesRouter.get('/', async (_req: Request, res: Response): Promise<void> => {
 // ── GET /api/invites/:token ──────────────────────────────────────────────────
 invitesRouter.get('/:token', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { token } = req.params;
+    const rawToken = String(req.params.token || '').trim();
+    if (!rawToken) {
+      throw new AppError(400, 'Token is required', 'VALIDATION_ERROR');
+    }
 
-    const { rows } = await db.query(
+    let { rows } = await db.query(
       `SELECT
         pi.id, pi.token, pi.email, pi.first_name, pi.last_name, pi.name, pi.role,
         pi.institution_id AS college_id,
@@ -42,24 +45,44 @@ invitesRouter.get('/:token', async (req: Request, res: Response): Promise<void> 
         pi.program_id, pi.department, pi.permissions, pi.status, pi.created_at, pi.expires_at
       FROM identity.pending_invites pi
       LEFT JOIN org.institutions inst ON inst.id = pi.institution_id
-      WHERE pi.token = $1`,
-      [token]
+      WHERE pi.token = $1 OR LOWER(pi.token) = LOWER($1)`,
+      [rawToken]
     );
 
     if (rows.length === 0) {
-      throw new AppError(404, 'Invite not found', 'NOT_FOUND');
+      const decoded = decodeURIComponent(rawToken);
+      const res2 = await db.query(
+        `SELECT
+          pi.id, pi.token, pi.email, pi.first_name, pi.last_name, pi.name, pi.role,
+          pi.institution_id AS college_id,
+          COALESCE(pi.institution_name, inst.name, 'Institution') AS college_name,
+          pi.program_id, pi.department, pi.permissions, pi.status, pi.created_at, pi.expires_at
+        FROM identity.pending_invites pi
+        LEFT JOIN org.institutions inst ON inst.id = pi.institution_id
+        WHERE pi.token = $1 OR LOWER(pi.token) = LOWER($1)`,
+        [decoded]
+      );
+      rows = res2.rows;
+    }
+
+    if (rows.length === 0) {
+      throw new AppError(404, 'Invitation not found or has been replaced by a newer invitation.', 'NOT_FOUND');
     }
 
     const invite = rows[0];
 
-    // Check if expired
-    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
-      throw new AppError(410, 'Invite has expired', 'EXPIRED');
-    }
-
     // Check if already accepted
     if (invite.status === 'ACCEPTED') {
-      throw new AppError(409, 'Invite already accepted', 'ALREADY_USED');
+      throw new AppError(409, 'This invitation has already been accepted. Please sign in.', 'ALREADY_USED');
+    }
+
+    // Check expiration with 30-day grace period
+    if (invite.expires_at) {
+      const expiry = new Date(invite.expires_at);
+      const gracePeriodMs = 30 * 24 * 60 * 60 * 1000;
+      if (Date.now() > expiry.getTime() + gracePeriodMs) {
+        throw new AppError(410, 'Invitation has expired. Please contact your administrator for a new invite.', 'EXPIRED');
+      }
     }
 
     sendSuccess(res, invite);
@@ -77,7 +100,7 @@ invitesRouter.post(
   '/:token/complete',
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const { token } = req.params;
+      const rawToken = String(req.params.token || '').trim();
       const parsed = completeInviteSchema.safeParse(req.body);
 
       if (!parsed.success) {
@@ -87,7 +110,7 @@ invitesRouter.post(
       const { password } = parsed.data;
 
       // Fetch invite
-      const { rows: invites } = await db.query(
+      let { rows: invites } = await db.query(
         `SELECT
           pi.id, pi.token, pi.email, pi.first_name, pi.last_name, pi.name, pi.role,
           pi.institution_id,
@@ -96,9 +119,26 @@ invitesRouter.post(
           pi.permissions, pi.status, pi.expires_at
         FROM identity.pending_invites pi
         LEFT JOIN org.institutions inst ON inst.id = pi.institution_id
-        WHERE pi.token = $1`,
-        [token]
+        WHERE pi.token = $1 OR LOWER(pi.token) = LOWER($1)`,
+        [rawToken]
       );
+
+      if (invites.length === 0) {
+        const decoded = decodeURIComponent(rawToken);
+        const res2 = await db.query(
+          `SELECT
+            pi.id, pi.token, pi.email, pi.first_name, pi.last_name, pi.name, pi.role,
+            pi.institution_id,
+            COALESCE(pi.institution_name, inst.name, 'Institution') AS institution_name,
+            pi.program_id, pi.department,
+            pi.permissions, pi.status, pi.expires_at
+          FROM identity.pending_invites pi
+          LEFT JOIN org.institutions inst ON inst.id = pi.institution_id
+          WHERE pi.token = $1 OR LOWER(pi.token) = LOWER($1)`,
+          [decoded]
+        );
+        invites = res2.rows;
+      }
 
       if (invites.length === 0) {
         throw new AppError(404, 'Invite not found', 'NOT_FOUND');
@@ -106,18 +146,22 @@ invitesRouter.post(
 
       const invite = invites[0];
 
-      // Validate invite
-      if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
-        throw new AppError(410, 'Invite has expired', 'EXPIRED');
+      if (invite.status === 'ACCEPTED') {
+        throw new AppError(409, 'Invite already accepted. Please sign in.', 'ALREADY_USED');
       }
 
-      if (invite.status === 'ACCEPTED') {
-        throw new AppError(409, 'Invite already accepted', 'ALREADY_USED');
+      // Check expiration with 30-day grace period
+      if (invite.expires_at) {
+        const expiry = new Date(invite.expires_at);
+        const gracePeriodMs = 30 * 24 * 60 * 60 * 1000;
+        if (Date.now() > expiry.getTime() + gracePeriodMs) {
+          throw new AppError(410, 'Invite has expired', 'EXPIRED');
+        }
       }
 
       // Check if user already exists
       const { rows: existingUsers } = await db.query(
-        `SELECT id FROM identity.users WHERE email = $1`,
+        `SELECT id FROM identity.users WHERE LOWER(email) = LOWER($1)`,
         [invite.email]
       );
 
@@ -127,20 +171,31 @@ invitesRouter.post(
       if (existingUsers.length > 0) {
         const { rows: userRows } = await db.query(
           `UPDATE identity.users
-           SET password_hash = $1, role = $2, name = $3, status = 'ACTIVE'
+           SET password_hash = $1, role = $2, name = $3, status = 'ACTIVE',
+               institution_id = COALESCE($5, institution_id)
            WHERE id = $4
            RETURNING id, name, email, role, token_version`,
-          [passwordHash, invite.role, invite.name, existingUsers[0].id]
+          [passwordHash, invite.role, invite.name, existingUsers[0].id, invite.institution_id]
         );
         user = userRows[0];
       } else {
         const { rows: userRows } = await db.query(
-          `INSERT INTO identity.users (name, email, password_hash, role, token_version, status)
-           VALUES ($1, $2, $3, $4, 0, 'ACTIVE')
+          `INSERT INTO identity.users (name, email, password_hash, role, token_version, status, institution_id)
+           VALUES ($1, $2, $3, $4, 0, 'ACTIVE', $5)
            RETURNING id, name, email, role, token_version`,
-          [invite.name, invite.email, passwordHash, invite.role]
+          [invite.name, invite.email.toLowerCase(), passwordHash, invite.role, invite.institution_id]
         );
         user = userRows[0];
+      }
+
+      // Ensure role_assignment exists
+      if (invite.institution_id) {
+        await db.query(
+          `INSERT INTO identity.role_assignments (user_id, role, institution_id, program_id)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT DO NOTHING`,
+          [user.id, invite.role, invite.institution_id, invite.program_id || null]
+        ).catch(() => {});
       }
 
       // Mark invite as accepted

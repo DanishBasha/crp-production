@@ -303,15 +303,6 @@ export const StudentDirectoryTable: React.FC<StudentDirectoryTableProps> = ({
                             <span>Assign</span>
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => onSelectStudent && onSelectStudent(student)}
-                          className="px-2.5 py-1 text-xs font-semibold text-neutral-800 hover:text-black bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors cursor-pointer inline-flex items-center space-x-1"
-                          title={`Open ${student.name}'s Student Dashboard`}
-                        >
-                          <LayoutDashboard className="w-3 h-3 text-neutral-600" />
-                          <span>Dashboard</span>
-                        </button>
                       </div>
                     </td>
                   </tr>

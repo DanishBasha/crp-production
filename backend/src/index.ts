@@ -26,7 +26,9 @@ eventBus.on(Events.USER_REGISTERED, async (payload: UserRegisteredPayload) => {
   }
 });
 
-const server = app.listen(env.PORT, async () => {
+import { attachInterviewGateway } from './services/interviewGateway';
+
+const server = app.listen(env.PORT, '0.0.0.0', async () => {
   console.log(`[backend] http://localhost:${env.PORT}  (${env.NODE_ENV})`);
   // Recover any agent runs that were RUNNING when the previous process died
   try {
@@ -35,5 +37,8 @@ const server = app.listen(env.PORT, async () => {
     console.error('[startup] recoverDeadRuns error:', err);
   }
 });
+
+// Live interview audio + results share the HTTP port: ws://<host>/api/interview/ws/:sessionId
+attachInterviewGateway(server);
 
 process.on('SIGTERM', () => server.close(() => process.exit(0)));

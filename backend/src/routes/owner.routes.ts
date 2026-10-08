@@ -213,7 +213,7 @@ ownerRouter.post(
 
       // Create invitation token
       const token = `inv_sup_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
 
       const { rows } = await db.query(
         `INSERT INTO identity.pending_invites
@@ -234,14 +234,15 @@ ownerRouter.post(
         ]
       );
 
-      const reqHost = req.get('host');
-      const reqProtocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
       const origin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer as string).origin : undefined);
+      const reqHost = req.get('host');
+      const reqProtocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
       const hostUrl = reqHost ? `${reqProtocol}://${reqHost}` : undefined;
       const baseUrl = (process.env.APP_URL && !process.env.APP_URL.includes('localhost')) 
         ? process.env.APP_URL 
-        : (origin || hostUrl || process.env.APP_URL || 'http://52.66.240.211');
-      const inviteUrl = `${baseUrl.replace(/\/+$/, '')}/?page=activate&invite_token=${token}`;
+        : (origin || hostUrl || 'https://52.66.240.211');
+      const secureBaseUrl = baseUrl.replace(/^http:\/\/52\.66\.240\.211/i, 'https://52.66.240.211');
+      const inviteUrl = `${secureBaseUrl.replace(/\/+$/, '')}/?page=activate&invite_token=${token}`;
 
       // Dispatch invite email asynchronously
       sendInviteEmail({

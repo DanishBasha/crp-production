@@ -38,20 +38,29 @@ export const InviteActivationPage: React.FC = () => {
   // Check URL params on mount
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
-    let token = searchParams.get('invite_token');
-    if (!token && window.location.hash.includes('invite_token=')) {
-      const hashQuery = window.location.hash.split('?')[1] || window.location.hash;
-      const hashParams = new URLSearchParams(hashQuery.replace(/^#\/?[^?]*\??/, ''));
-      token = hashParams.get('invite_token');
+    let token = searchParams.get('invite_token') || searchParams.get('token') || searchParams.get('activateToken') || searchParams.get('code') || searchParams.get('inv');
+    
+    if (!token && window.location.hash) {
+      const hashStr = window.location.hash;
+      const qIndex = hashStr.indexOf('?');
+      if (qIndex !== -1) {
+        const hashParams = new URLSearchParams(hashStr.slice(qIndex + 1));
+        token = hashParams.get('invite_token') || hashParams.get('token') || hashParams.get('activateToken') || hashParams.get('code') || hashParams.get('inv');
+      } else {
+        const match = hashStr.match(/(?:invite_token|token|activateToken|code|inv)=([^&]+)/);
+        if (match) token = match[1];
+      }
     }
+    
     if (!token) {
       try {
-        token = sessionStorage.getItem('crp_pending_invite_token');
+        token = sessionStorage.getItem('crp_pending_invite_token') || localStorage.getItem('crp_pending_invite_token');
       } catch {}
     }
     if (token) {
-      setInviteToken(token);
-      lookupToken(token);
+      const cleaned = decodeURIComponent(token.trim());
+      setInviteToken(cleaned);
+      lookupToken(cleaned);
     }
   }, []);
 

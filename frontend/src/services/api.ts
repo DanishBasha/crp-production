@@ -1712,44 +1712,118 @@ class ApiClient {
   };
 
   interview = {
-    start: async (studentId: string, type: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION' | 'PRACTICE' = 'MOCK_INTERVIEW', topic?: string): Promise<{ sessionId: string; firstQuestion: QuestionTurn }> => {
+    start: async (
+      studentId: string, 
+      type: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION' | 'PRACTICE' = 'MOCK_INTERVIEW', 
+      topic?: string | ParsedResume | null,
+      resume?: ParsedResume | null
+    ): Promise<{ sessionId: string; firstQuestion: QuestionTurn; maxTurns?: number; coinsRemaining?: number }> => {
+      let customTopic: string | undefined;
+      let resumeObj: ParsedResume | null | undefined;
+      if (typeof topic === 'string') {
+        customTopic = topic;
+        resumeObj = resume;
+      } else if (topic && typeof topic === 'object') {
+        resumeObj = topic as ParsedResume;
+        if (resume && typeof resume === 'string') {
+          customTopic = resume;
+        }
+      }
+
+      const skills = resumeObj ? [
+        ...(resumeObj.skills?.languages || []),
+        ...(resumeObj.skills?.frameworks || []),
+        ...(resumeObj.skills?.databases || []),
+        ...(resumeObj.skills?.tools || []),
+      ] : [];
+      const projects = (resumeObj?.projects || []).map(p => ({
+        title: p.title,
+        techStack: p.techStack || [],
+        description: p.description || '',
+      }));
+
+      // 1. Try real live WebSocket-backed interview session (/interview/sessions)
+      try {
+        const res = await this._fetch<any>('/interview/sessions', {
+          method: 'POST',
+          body: JSON.stringify({
+            sessionType: type,
+            topic: customTopic,
+            ...(skills.length || projects.length ? { resume: { skills: skills.slice(0, 40), projects: projects.slice(0, 10) } } : {})
+          }),
+        });
+        const session = res?.data || res?.session || res;
+        const question = res?.firstQuestion || session?.firstQuestion || session?.currentQuestion;
+        if (session?.sessionId && question) {
+          const firstQ: QuestionTurn = {
+            id: question.id || question.questionId || `live_q_1_${Date.now()}`,
+            questionNumber: question.questionNumber || question.sequenceNo || 1,
+            questionText: question.questionText || question.question_text,
+            difficulty: question.difficulty || 'EASY',
+            category: question.category || customTopic
+          };
+          const sess = {
+            sessionId: session.sessionId,
+            type,
+            topic: customTopic,
+            turnIndex: 0,
+            questions: [firstQ],
+            tabSwitches: 0
+          };
+          this.setStorage(`interview_${session.sessionId}`, sess);
+          return {
+            sessionId: session.sessionId,
+            firstQuestion: firstQ,
+            maxTurns: session.maxTurns || 15,
+            coinsRemaining: session.coinsRemaining
+          };
+        }
+      } catch (err) {
+        console.warn('[api.interview.start] /interview/sessions fallback:', err);
+      }
+
+      // 2. Fallback to /interview/start endpoint
       try {
         const res = await this._fetch<{ data: { sessionId: string; firstQuestion: QuestionTurn } }>('/interview/start', {
           method: 'POST',
-          body: JSON.stringify({ studentId, type, topic }),
+          body: JSON.stringify({ studentId, type, topic: customTopic }),
         });
         if (res?.data?.sessionId && res.data.firstQuestion) {
           const sess = {
             sessionId: res.data.sessionId,
             type,
-            topic,
+            topic: customTopic,
             turnIndex: 0,
             questions: [res.data.firstQuestion],
             tabSwitches: 0
           };
           this.setStorage(`interview_${res.data.sessionId}`, sess);
-          return res.data;
+          return {
+            sessionId: res.data.sessionId,
+            firstQuestion: res.data.firstQuestion,
+            maxTurns: 15
+          };
         }
       } catch (err) {
         console.warn('[api.interview.start] Real backend start fallback:', err);
       }
 
-      // Dynamic fallback based on real student profile and topic
+      // 3. Dynamic fallback based on real student profile and topic
       const student = await this.student.getProfile(studentId);
-      const dynamicTurns = generateDynamicQuestions(student, topic);
+      const dynamicTurns = generateDynamicQuestions(student, customTopic);
       const firstQ = dynamicTurns[0];
       const sessionId = `ses_${Date.now()}`;
       const sessionData = {
         sessionId,
         type,
-        topic,
+        topic: customTopic,
         turnIndex: 0,
         questions: [firstQ],
         plannedTurns: dynamicTurns,
         tabSwitches: 0
       };
       this.setStorage(`interview_${sessionId}`, sessionData);
-      return { sessionId, firstQuestion: firstQ };
+      return { sessionId, firstQuestion: firstQ, maxTurns: dynamicTurns.length };
     },
 
     recordProctorEvent: async (sessionId: string, eventType: 'TAB_SWITCH' | 'FULLSCREEN_EXIT') => {
@@ -2363,3 +2437,4 @@ class ApiClient {
 }
 
 export const api = new ApiClient();
+export const API_ORIGIN = typeof window !== 'undefined' && window.location.origin ? window.location.origin : '';
