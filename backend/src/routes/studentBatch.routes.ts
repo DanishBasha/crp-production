@@ -94,6 +94,60 @@ studentBatchRouter.post(
         batchId = batches[0].id;
       }
 
+      // Pre-validation: ensure all referenced departments and programs exist
+      const { rows: existingDepts } = await db.query(
+        `SELECT LOWER(TRIM(name)) AS name FROM org.departments WHERE institution_id = $1`,
+        [collegeId]
+      );
+      const availableDeptNames = new Set(existingDepts.map(d => d.name));
+
+      const { rows: existingProgs } = await db.query(
+        `SELECT LOWER(TRIM(name)) AS name FROM org.programs WHERE institution_id = $1`,
+        [collegeId]
+      );
+      const availableProgNames = new Set(existingProgs.map(p => p.name));
+
+      const missingDepts = new Set<string>();
+      const missingProgs = new Set<string>();
+
+      for (let i = startIdx; i < lines.length; i++) {
+        const cols = lines[i].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+        if (cols.length < 2) continue;
+        let deptVal = '';
+        let progVal = '';
+        if (headerCols.length > 0) {
+          headerCols.forEach((col, idx) => {
+            const val = cols[idx] || '';
+            if (col.includes('dept') || col.includes('department')) deptVal = val.trim();
+            else if (col.includes('program')) progVal = val.trim();
+          });
+        } else {
+          if (cols.length >= 4) deptVal = cols[3]?.trim();
+        }
+
+        if (deptVal && availableDeptNames.size > 0 && !availableDeptNames.has(deptVal.toLowerCase())) {
+          missingDepts.add(deptVal);
+        }
+        if (progVal && availableProgNames.size > 0 && !availableProgNames.has(progVal.toLowerCase())) {
+          missingProgs.add(progVal);
+        }
+      }
+
+      if (missingDepts.size > 0) {
+        throw new AppError(
+          422,
+          `The following department(s) are not available in your institution: ${Array.from(missingDepts).join(', ')}. Please first add these departments and try again.`,
+          'MISSING_DATA'
+        );
+      }
+      if (missingProgs.size > 0) {
+        throw new AppError(
+          422,
+          `The following program(s) are not available in your institution: ${Array.from(missingProgs).join(', ')}. Please first add these programs and try again.`,
+          'MISSING_DATA'
+        );
+      }
+
       for (let i = startIdx; i < lines.length; i++) {
         const cols = lines[i].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
         if (cols.length < 2) continue;

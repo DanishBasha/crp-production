@@ -574,6 +574,26 @@ export const MockInterviewRoom: React.FC = () => {
 
   const initMicrophoneStream = async (): Promise<boolean> => {
     try {
+      // 1. Check secure context: navigator.mediaDevices is undefined on plain HTTP
+      const isHttpNonLocalhost = typeof window !== 'undefined' && 
+        window.location.protocol === 'http:' && 
+        !window.location.hostname.includes('localhost') && 
+        window.location.hostname !== '127.0.0.1';
+
+      if (!window.isSecureContext && isHttpNonLocalhost) {
+        setMicPermissionError(
+          `Microphone prompt is blocked by browser on insecure HTTP. Please switch to secure HTTPS (https://${window.location.host}) to allow microphone access.`
+        );
+        return false;
+      }
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setMicPermissionError(
+          `Microphone access is unavailable on this protocol (${window.location.protocol}//${window.location.host}). Please open the secure HTTPS version.`
+        );
+        return false;
+      }
+
       if (!mediaStreamRef.current || !mediaStreamRef.current.active) {
         let stream: MediaStream;
         try {
@@ -1416,6 +1436,27 @@ export const MockInterviewRoom: React.FC = () => {
         </div>
       )}
 
+      {/* Insecure Origin HTTP warning banner */}
+      {typeof window !== 'undefined' && !window.isSecureContext && window.location.protocol === 'http:' && !window.location.hostname.includes('localhost') && window.location.hostname !== '127.0.0.1' && (
+        <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs text-rose-950 shadow-sm animate-pulse">
+          <div className="flex items-center space-x-3">
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+            <div>
+              <strong className="block font-bold">Microphone Blocked by Insecure HTTP</strong>
+              <span className="text-rose-800">Your browser blocks microphone permissions on plain HTTP. Switch to HTTPS to allow mic access.</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => { window.location.href = window.location.href.replace(/^http:/i, 'https:'); }}
+            className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs shadow-xs cursor-pointer whitespace-nowrap flex items-center space-x-1.5"
+          >
+            <span>Switch to Secure HTTPS Now</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {micPermissionError && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-center justify-between text-amber-900 text-xs">
           <span>{micPermissionError}</span>
@@ -1423,6 +1464,7 @@ export const MockInterviewRoom: React.FC = () => {
         </div>
       )}
 
+      {/* Case 1: Assigned Assessment Session Header */}
       {!hasSessionStarted && activeAssignment && (
         <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs text-purple-900 shadow-2xs">
           <div className="flex items-center space-x-2.5">
@@ -1442,6 +1484,32 @@ export const MockInterviewRoom: React.FC = () => {
             </span>
             <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${activeAssignment.isMandatory ? 'bg-amber-100 text-amber-900' : 'bg-neutral-100 text-neutral-700'}`}>
               {activeAssignment.isMandatory ? 'Mandatory' : 'Optional'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Case 2: Personal Resume-Based Mock Interview Header */}
+      {!hasSessionStarted && !activeAssignment && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs text-emerald-900 shadow-2xs">
+          <div className="flex items-center space-x-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 animate-pulse"></span>
+            <div>
+              <span className="font-semibold text-emerald-950">Personal Resume-Based Mock Interview</span>
+              <span className="text-emerald-700 ml-1.5">· Strictly tailored to your uploaded resume, projects &amp; skills</span>
+              {student.resume?.skills?.languages?.length ? (
+                <p className="text-[11px] text-emerald-800 mt-0.5 font-mono">
+                  Skills: {student.resume.skills.languages.slice(0, 5).join(', ')}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex items-center space-x-2 shrink-0">
+            <span className="px-2.5 py-0.5 rounded font-mono text-[10px] bg-emerald-200/70 text-emerald-900 font-semibold">
+              RESUME GROUNDED
+            </span>
+            <span className="px-2.5 py-0.5 rounded text-[10px] font-semibold bg-white border border-emerald-300 text-emerald-900">
+              Practice Mode
             </span>
           </div>
         </div>

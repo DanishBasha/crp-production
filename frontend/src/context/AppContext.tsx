@@ -144,7 +144,7 @@ interface AppContextType {
   student: StudentProfile;
   setStudent: React.Dispatch<React.SetStateAction<StudentProfile>>;
   interviewState: InterviewSessionState;
-  startInterview: (type?: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION') => Promise<void>;
+  startInterview: (type?: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION', options?: { isResumeBased?: boolean; assignment?: InterviewAssignment | null }) => Promise<void>;
   submitAnswer: (answerText: string, options?: { timeExpired?: boolean }) => Promise<void>;
   applyLiveInterviewTurn: (turn: {
     transcript: string;
@@ -1189,8 +1189,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [interviewState.isActive, interviewState.tabSwitches, interviewState.sessionId, activeAssignment]);
 
-  const startInterview = async (type: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION' = 'MOCK_INTERVIEW') => {
-    if (activeAssignment && isAssignmentDisqualified(activeAssignment.id)) {
+  const startInterview = async (
+    type: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION' = 'MOCK_INTERVIEW',
+    options?: { isResumeBased?: boolean; assignment?: InterviewAssignment | null }
+  ) => {
+    // If explicit assignment passed, activate it. If isResumeBased or assignment is explicitly null, clear activeAssignment!
+    let currentAsg: InterviewAssignment | null = activeAssignment;
+    if (options?.assignment !== undefined) {
+      currentAsg = options.assignment;
+      setActiveAssignment(options.assignment);
+    } else if (options?.isResumeBased || options?.assignment === null) {
+      currentAsg = null;
+      setActiveAssignment(null);
+    }
+
+    if (currentAsg && isAssignmentDisqualified(currentAsg.id)) {
       alert("Access Revoked: You have been permanently disqualified from this interview due to exceeding the proctoring limit (4 tab switches). You cannot attend this interview again.");
       return;
     }
@@ -1228,7 +1241,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setActiveView(type === 'MOCK_INTERVIEW' ? 'INTERVIEW_ROOM' : 'LISTENING_ROOM');
 
-    const targetTopic = activeAssignment?.domainOrTopic || activeAssignment?.title || student.track || student.department;
+    // Self-serve interview is ALWAYS grounded on candidate's Personal Resume & Projects
+    const targetTopic = currentAsg 
+      ? (currentAsg.interviewMode === 'RESUME_BASED' ? 'Personal Resume & Projects' : (currentAsg.domainOrTopic || currentAsg.title || 'Technical Interview'))
+      : 'Personal Resume & Projects';
 
     try {
       const data = await api.interview.start(student.id || 'stu-21cs1084', type, targetTopic, student.resume);
@@ -1620,9 +1636,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setActiveAssignment(assignment);
     if (assignment.sessionType === 'LISTENING_COMPREHENSION') {
-      await startInterview('LISTENING_COMPREHENSION');
+      await startInterview('LISTENING_COMPREHENSION', { assignment });
     } else {
-      await startInterview('MOCK_INTERVIEW');
+      await startInterview('MOCK_INTERVIEW', { assignment });
     }
   };
 

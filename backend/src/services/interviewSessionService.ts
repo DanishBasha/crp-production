@@ -159,8 +159,56 @@ export async function startLiveInterview(userId: string, resumeInput?: ResumeInp
      WHERE s.user_id = $1`,
     [userId]
   );
-  if (rows.length === 0) throw new AppError(404, 'Student profile not found', 'NOT_FOUND');
-  const student = rows[0];
+  let student = rows[0];
+  if (!student) {
+    const { rows: uRows } = await db.query(
+      `SELECT id, name, email, institution_id FROM identity.users WHERE id = $1`,
+      [userId]
+    );
+    if (uRows.length > 0) {
+      const u = uRows[0];
+      let instId = u.institution_id;
+      if (!instId) {
+        const { rows: insts } = await db.query(`SELECT id FROM org.institutions ORDER BY created_at DESC LIMIT 1`);
+        instId = insts[0]?.id;
+      }
+      let programId: string | null = null;
+      let batchId: string | null = null;
+      if (instId) {
+        const { rows: progs } = await db.query(`SELECT id, name FROM org.programs WHERE institution_id = $1 LIMIT 1`, [instId]);
+        if (progs.length > 0) {
+          programId = progs[0].id;
+        } else {
+          const { rows: newProg } = await db.query(
+            `INSERT INTO org.programs (institution_id, name, code) VALUES ($1, 'General Engineering', 'GEN') RETURNING id`,
+            [instId]
+          );
+          programId = newProg[0].id;
+        }
+        const { rows: batches } = await db.query(`SELECT id FROM org.batches WHERE program_id = $1 LIMIT 1`, [programId]);
+        if (batches.length > 0) {
+          batchId = batches[0].id;
+        } else {
+          const { rows: newBatch } = await db.query(
+            `INSERT INTO org.batches (program_id, name, year, track) VALUES ($1, 'Batch 2026', 2026, 'General Track') RETURNING id`,
+            [programId]
+          );
+          batchId = newBatch[0].id;
+        }
+      }
+      const roll = `STU${Date.now().toString(36).toUpperCase().slice(-6)}`;
+      const { rows: newStu } = await db.query(
+        `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track)
+         VALUES ($1, $2, $3, $4, 'General Department', 2026, 'General Track')
+         RETURNING id, program_id, batch_id, subdivision_id`,
+        [u.id, programId, batchId, roll]
+      );
+      if (newStu.length > 0) {
+        student = { ...newStu[0], name: u.name };
+      }
+    }
+  }
+  if (!student) throw new AppError(404, 'Student profile not found', 'NOT_FOUND');
 
   // Fail fast before creating anything when the wallet is empty
   if ((await getCoins(student.id)).coins < 1) {

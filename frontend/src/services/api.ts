@@ -709,6 +709,9 @@ class ApiClient {
       'Content-Type': 'application/json',
       ...(options.headers as Record<string, string> || {}),
     };
+    if (options.body instanceof FormData) {
+      delete headers['Content-Type'];
+    }
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
@@ -1662,7 +1665,20 @@ class ApiClient {
       } else {
         const rawText = (payload as any)?.resumeText || '';
         const fileName = (payload as any)?.fileName || 'Uploaded_Resume.pdf';
-        parsed = parseResumeContent(rawText, fileName);
+        try {
+          const res = await this._fetch<{ data: ParsedResume }>('/students/parse-resume', {
+            method: 'POST',
+            body: JSON.stringify({ resumeText: rawText, fileName }),
+          });
+          if (res?.data && res.data.skills) {
+            parsed = res.data;
+          } else {
+            parsed = parseResumeContent(rawText, fileName);
+          }
+        } catch (err) {
+          console.warn('[api.student.uploadResume] Groq AI parse fallback to local parser:', err);
+          parsed = parseResumeContent(rawText, fileName);
+        }
       }
 
       // 1. If a binary File or FormData is available, upload to /resume to store resume_url in Supabase

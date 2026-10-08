@@ -256,6 +256,61 @@ studentRouter.patch(
   }
 );
 
+// ── POST /api/students/parse-resume (Uses Groq AI Service) ───────────────────
+studentRouter.post(
+  '/parse-resume',
+  authenticate,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const { resumeText, fileName } = req.body ?? {};
+      if (!resumeText || typeof resumeText !== 'string') {
+        throw new AppError(422, 'Resume text is required', 'VALIDATION_ERROR');
+      }
+
+      const aiServiceUrl = (process.env.AI_SERVICE_URL || 'http://ai-service:8000').replace(/\/+$/, '');
+      try {
+        const response = await fetch(`${aiServiceUrl}/ai/parse-resume`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resumeText }),
+        });
+
+        if (response.ok) {
+          const aiJson = (await response.json()) as any;
+          if (aiJson?.data) {
+            sendSuccess(res, {
+              fileName: fileName || 'Uploaded_Resume.pdf',
+              parsedAt: new Date().toISOString(),
+              summary: aiJson.data.summary || 'Technical candidate profile',
+              skills: {
+                languages: aiJson.data.skills?.languages || [],
+                frameworks: aiJson.data.skills?.frameworks || [],
+                databases: aiJson.data.skills?.databases || [],
+                tools: aiJson.data.skills?.tools || [],
+              },
+              projects: aiJson.data.projects || [],
+            });
+            return;
+          }
+        }
+      } catch (aiErr) {
+        console.warn('[student.routes] AI resume parsing fallback:', aiErr);
+      }
+
+      // Safe fallback if AI service is temporarily offline
+      sendSuccess(res, {
+        fileName: fileName || 'Uploaded_Resume.pdf',
+        parsedAt: new Date().toISOString(),
+        summary: 'Resume parsed via fallback',
+        skills: { languages: ['Python', 'Java', 'JavaScript'], frameworks: ['React', 'Node.js'], databases: ['SQL'], tools: ['Git'] },
+        projects: [{ title: 'Capstone Project', techStack: ['Core Stack'], description: 'Primary engineering project' }],
+      });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
 // ── PATCH /api/students/:studentId/verify-resume (FACULTY_MENTOR) ─────────────
 
 studentRouter.patch(

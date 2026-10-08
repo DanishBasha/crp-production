@@ -33,25 +33,14 @@ invitesRouter.get('/', async (_req: Request, res: Response): Promise<void> => {
 invitesRouter.get('/:token', async (req: Request, res: Response): Promise<void> => {
   try {
     const rawToken = String(req.params.token || '').trim();
-    if (!rawToken) {
+    const queryEmail = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+    if (!rawToken && !queryEmail) {
       throw new AppError(400, 'Token is required', 'VALIDATION_ERROR');
     }
 
-    let { rows } = await db.query(
-      `SELECT
-        pi.id, pi.token, pi.email, pi.first_name, pi.last_name, pi.name, pi.role,
-        pi.institution_id AS college_id,
-        COALESCE(pi.institution_name, inst.name, 'Institution') AS college_name,
-        pi.program_id, pi.department, pi.permissions, pi.status, pi.created_at, pi.expires_at
-      FROM identity.pending_invites pi
-      LEFT JOIN org.institutions inst ON inst.id = pi.institution_id
-      WHERE pi.token = $1 OR LOWER(pi.token) = LOWER($1)`,
-      [rawToken]
-    );
-
-    if (rows.length === 0) {
-      const decoded = decodeURIComponent(rawToken);
-      const res2 = await db.query(
+    let rows: any[] = [];
+    if (rawToken) {
+      const res1 = await db.query(
         `SELECT
           pi.id, pi.token, pi.email, pi.first_name, pi.last_name, pi.name, pi.role,
           pi.institution_id AS college_id,
@@ -60,9 +49,70 @@ invitesRouter.get('/:token', async (req: Request, res: Response): Promise<void> 
         FROM identity.pending_invites pi
         LEFT JOIN org.institutions inst ON inst.id = pi.institution_id
         WHERE pi.token = $1 OR LOWER(pi.token) = LOWER($1)`,
-        [decoded]
+        [rawToken]
       );
-      rows = res2.rows;
+      rows = res1.rows;
+
+      if (rows.length === 0) {
+        const decoded = decodeURIComponent(rawToken);
+        const res2 = await db.query(
+          `SELECT
+            pi.id, pi.token, pi.email, pi.first_name, pi.last_name, pi.name, pi.role,
+            pi.institution_id AS college_id,
+            COALESCE(pi.institution_name, inst.name, 'Institution') AS college_name,
+            pi.program_id, pi.department, pi.permissions, pi.status, pi.created_at, pi.expires_at
+          FROM identity.pending_invites pi
+          LEFT JOIN org.institutions inst ON inst.id = pi.institution_id
+          WHERE pi.token = $1 OR LOWER(pi.token) = LOWER($1)`,
+          [decoded]
+        );
+        rows = res2.rows;
+      }
+    }
+
+    // Fallback: look up by email from identity.pending_invites if not found by raw token
+    if (rows.length === 0 && (queryEmail || rawToken.includes('@'))) {
+      const lookupEmail = (queryEmail || rawToken).toLowerCase().trim();
+      const resEmail = await db.query(
+        `SELECT
+          pi.id, pi.token, pi.email, pi.first_name, pi.last_name, pi.name, pi.role,
+          pi.institution_id AS college_id,
+          COALESCE(pi.institution_name, inst.name, 'Institution') AS college_name,
+          pi.program_id, pi.department, pi.permissions, pi.status, pi.created_at, pi.expires_at
+        FROM identity.pending_invites pi
+        LEFT JOIN org.institutions inst ON inst.id = pi.institution_id
+        WHERE LOWER(pi.email) = $1
+        ORDER BY pi.created_at DESC LIMIT 1`,
+        [lookupEmail]
+      );
+      rows = resEmail.rows;
+    }
+
+    // Fallback: check org.department_staff table (supports activation_token generated when adding staff)
+    if (rows.length === 0) {
+      const staffQuery = await db.query(
+        `SELECT
+          ds.id, ds.activation_token AS token, ds.email, ds.name, 'COUNSELLOR'::text AS role,
+          ds.institution_id AS college_id,
+          COALESCE(inst.name, 'Institution') AS college_name,
+          ds.department, ds.status, ds.created_at
+        FROM org.department_staff ds
+        LEFT JOIN org.institutions inst ON inst.id = ds.institution_id
+        WHERE ds.activation_token = $1 OR LOWER(ds.email) = LOWER($1) OR ($2::text IS NOT NULL AND LOWER(ds.email) = LOWER($2::text))
+        LIMIT 1`,
+        [rawToken, queryEmail || null]
+      );
+      if (staffQuery.rows.length > 0) {
+        const s = staffQuery.rows[0];
+        rows = [{
+          ...s,
+          first_name: s.name?.split(' ')[0] || '',
+          last_name: s.name?.split(' ').slice(1).join(' ') || '',
+          permissions: ['CAN_VIEW_STUDENT_PROGRESS'],
+          status: s.status === 'ACTIVE' ? 'PENDING' : s.status,
+          expires_at: new Date(Date.now() + 90 * 86400000)
+        }];
+      }
     }
 
     if (rows.length === 0) {
@@ -73,16 +123,12 @@ invitesRouter.get('/:token', async (req: Request, res: Response): Promise<void> 
 
     // Check if already accepted
     if (invite.status === 'ACCEPTED') {
-      throw new AppError(409, 'This invitation has already been accepted. Please sign in.', 'ALREADY_USED');
-    }
-
-    // Check expiration with 30-day grace period
-    if (invite.expires_at) {
-      const expiry = new Date(invite.expires_at);
-      const gracePeriodMs = 30 * 24 * 60 * 60 * 1000;
-      if (Date.now() > expiry.getTime() + gracePeriodMs) {
-        throw new AppError(410, 'Invitation has expired. Please contact your administrator for a new invite.', 'EXPIRED');
-      }
+      sendSuccess(res, {
+        ...invite,
+        alreadyAccepted: true,
+        message: 'This invitation has already been accepted. Please sign in.'
+      });
+      return;
     }
 
     sendSuccess(res, invite);
@@ -141,23 +187,58 @@ invitesRouter.post(
       }
 
       if (invites.length === 0) {
+        // Fallback: look up in pending_invites by email if token was an email
+        if (rawToken.includes('@')) {
+          const resEmail = await db.query(
+            `SELECT
+              pi.id, pi.token, pi.email, pi.first_name, pi.last_name, pi.name, pi.role,
+              pi.institution_id,
+              COALESCE(pi.institution_name, inst.name, 'Institution') AS institution_name,
+              pi.program_id, pi.department,
+              pi.permissions, pi.status, pi.expires_at
+            FROM identity.pending_invites pi
+            LEFT JOIN org.institutions inst ON inst.id = pi.institution_id
+            WHERE LOWER(pi.email) = LOWER($1)
+            ORDER BY pi.created_at DESC LIMIT 1`,
+            [rawToken.toLowerCase().trim()]
+          );
+          invites = resEmail.rows;
+        }
+      }
+
+      if (invites.length === 0) {
+        // Fallback: check org.department_staff
+        const staffQuery = await db.query(
+          `SELECT
+            ds.id, ds.activation_token AS token, ds.email, ds.name, 'COUNSELLOR'::text AS role,
+            ds.institution_id,
+            COALESCE(inst.name, 'Institution') AS institution_name,
+            ds.department, ds.status
+          FROM org.department_staff ds
+          LEFT JOIN org.institutions inst ON inst.id = ds.institution_id
+          WHERE ds.activation_token = $1 OR LOWER(ds.email) = LOWER($1)
+          LIMIT 1`,
+          [rawToken]
+        );
+        if (staffQuery.rows.length > 0) {
+          const s = staffQuery.rows[0];
+          invites = [{
+            ...s,
+            first_name: s.name?.split(' ')[0] || '',
+            last_name: s.name?.split(' ').slice(1).join(' ') || '',
+            permissions: ['CAN_VIEW_STUDENT_PROGRESS'],
+            status: 'PENDING',
+            expires_at: null
+          }];
+          await db.query(`UPDATE org.department_staff SET status = 'ACTIVE' WHERE id = $1`, [s.id]).catch(() => {});
+        }
+      }
+
+      if (invites.length === 0) {
         throw new AppError(404, 'Invite not found', 'NOT_FOUND');
       }
 
       const invite = invites[0];
-
-      if (invite.status === 'ACCEPTED') {
-        throw new AppError(409, 'Invite already accepted. Please sign in.', 'ALREADY_USED');
-      }
-
-      // Check expiration with 30-day grace period
-      if (invite.expires_at) {
-        const expiry = new Date(invite.expires_at);
-        const gracePeriodMs = 30 * 24 * 60 * 60 * 1000;
-        if (Date.now() > expiry.getTime() + gracePeriodMs) {
-          throw new AppError(410, 'Invite has expired', 'EXPIRED');
-        }
-      }
 
       // Check if user already exists
       const { rows: existingUsers } = await db.query(

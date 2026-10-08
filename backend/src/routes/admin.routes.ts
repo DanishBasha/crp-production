@@ -173,7 +173,7 @@ adminRouter.get(
       const params: any[] = [];
       if (collegeId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(collegeId)) {
         params.push(collegeId);
-        query += ` WHERE institution_id = $1`;
+        query += ` WHERE (institution_id = $1 OR institution_id IS NULL)`;
       }
       query += ` ORDER BY created_at DESC`;
 

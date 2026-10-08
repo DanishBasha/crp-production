@@ -284,7 +284,7 @@ export interface InterviewAssignment {
   collegeId?: string;
 
   // Targeting scope
-  targetScope: 'ALL_STUDENTS' | 'PROGRAM' | 'DEPARTMENT' | 'MY_MENTEES' | 'SPECIFIC_STUDENT' | 'CLASS';
+  targetScope: 'ALL_STUDENTS' | 'PROGRAM' | 'DEPARTMENT' | 'MY_MENTEES' | 'SPECIFIC_STUDENT' | 'CLASS' | 'BATCH';
   targetDomainOrTrack?: string;
   targetProgramName?: string;
   targetProgramNames?: string[];

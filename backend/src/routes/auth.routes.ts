@@ -438,10 +438,11 @@ authRouter.post('/login', async (req: Request, res: Response): Promise<void> => 
          b.track        AS student_track,
          p.id           AS program_id,
          p.name         AS program_name,
-         COALESCE(inst.id, ra_inst.id, inv_inst.id, ds_inst.id) AS institution_id,
-         COALESCE(inst.name, ra_inst.name, inv_inst.name, ds_inst.name) AS institution_name,
+         COALESCE(u.institution_id, inst.id, ra_inst.id, inv_inst.id, ds_inst.id, u_inst.id) AS institution_id,
+         COALESCE(u_inst.name, inst.name, ra_inst.name, inv_inst.name, ds_inst.name) AS institution_name,
          COALESCE(ds.department, fp.department, d.department) AS department
        FROM identity.users u
+       LEFT JOIN org.institutions       u_inst ON u_inst.id    = u.institution_id
        LEFT JOIN org.students           s    ON s.user_id     = u.id
        LEFT JOIN org.batches            b    ON b.id          = s.batch_id
        LEFT JOIN org.programs           p    ON p.id          = b.program_id

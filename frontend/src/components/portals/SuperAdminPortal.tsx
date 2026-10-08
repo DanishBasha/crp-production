@@ -50,6 +50,7 @@ import { StudentDirectoryTable } from '../common/StudentDirectoryTable';
 import { AssessmentMonitoringWidget } from '../common/AssessmentMonitoringWidget';
 import { DepartmentClassesManager } from '../common/DepartmentClassesManager';
 import { CustomSelect } from '../common/CustomSelect';
+import { MissingDataAlertModal } from '../common/MissingDataAlertModal';
 
 export const SuperAdminPortal: React.FC = () => {
   const { currentUser, assignments, viewProgramDetail, openStudentDashboard, openAdminDashboard } = useApp();
@@ -95,6 +96,10 @@ export const SuperAdminPortal: React.FC = () => {
   const [bulkIntakeModal, setBulkIntakeModal] = useState(false);
   const [bulkScrutinyModal, setBulkScrutinyModal] = useState(false);
   const [inspectStudentId, setInspectStudentId] = useState<string | null>(null);
+  const [missingDataAlert, setMissingDataAlert] = useState<{
+    isOpen: boolean;
+    items: Array<{ type: 'department' | 'program' | 'class' | 'student'; name: string }>;
+  }>({ isOpen: false, items: [] });
 
   // Session Assignment Modal state
   const [assignModalOpen, setAssignModalOpen] = useState(false);
@@ -641,6 +646,53 @@ export const SuperAdminPortal: React.FC = () => {
   // Bulk Student Intake & Conditional Program/Department Assignment (CSV)
   const handleBulkIntake = async () => {
     if (!csvIntakeText.trim()) return;
+
+    // 1. Pre-validate CSV rows against existing departments and programs
+    const lines = csvIntakeText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    const availableDepts = new Set(departments.map(d => (d.name || '').toLowerCase().trim()));
+    const availableProgs = new Set(programs.map(p => (p.name || '').toLowerCase().trim()));
+    const missing: Array<{ type: 'department' | 'program'; name: string }> = [];
+    const seen = new Set<string>();
+
+    let startIdx = 0;
+    let headerCols: string[] = [];
+    if (lines.length > 0 && lines[0].toLowerCase().includes('name')) {
+      startIdx = 1;
+      headerCols = lines[0].split(',').map(c => c.trim().toLowerCase().replace(/^["']|["']$/g, ''));
+    }
+
+    for (let i = startIdx; i < lines.length; i++) {
+      const cols = lines[i].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+      if (cols.length < 2) continue;
+      let deptVal = '';
+      let progVal = '';
+
+      if (headerCols.length > 0) {
+        headerCols.forEach((col, idx) => {
+          const val = cols[idx] || '';
+          if (col.includes('dept') || col.includes('department')) deptVal = val.trim();
+          else if (col.includes('program')) progVal = val.trim();
+        });
+      } else {
+        if (cols.length >= 4) deptVal = cols[3]?.trim();
+        if (cols.length >= 3) progVal = cols[2]?.trim();
+      }
+
+      if (deptVal && availableDepts.size > 0 && !availableDepts.has(deptVal.toLowerCase()) && !seen.has(`dept:${deptVal.toLowerCase()}`)) {
+        seen.add(`dept:${deptVal.toLowerCase()}`);
+        missing.push({ type: 'department', name: deptVal });
+      }
+      if (progVal && availableProgs.size > 0 && !availableProgs.has(progVal.toLowerCase()) && !seen.has(`prog:${progVal.toLowerCase()}`)) {
+        seen.add(`prog:${progVal.toLowerCase()}`);
+        missing.push({ type: 'program', name: progVal });
+      }
+    }
+
+    if (missing.length > 0) {
+      setMissingDataAlert({ isOpen: true, items: missing });
+      return;
+    }
+
     try {
       const res = await api.studentBatch.bulkImportAndAssignStudents(collegeId, csvIntakeText, intakeTargetBatch);
       logger.info('STUDENT', `Bulk student assignment completed: ${res.count} candidates in Batch ${intakeTargetBatch}`);
@@ -652,6 +704,18 @@ export const SuperAdminPortal: React.FC = () => {
       setCsvIntakeText('');
       await loadData();
     } catch (err: any) {
+      const msg = err?.message || '';
+      if (err?.code === 'MISSING_DATA' || msg.includes('not available')) {
+        const missingMatch = msg.match(/are not available in your institution:\s*([^.]+)/i);
+        if (missingMatch) {
+          const items = missingMatch[1].split(',').map((s: string) => ({
+            type: msg.includes('program') ? 'program' : 'department' as any,
+            name: s.trim()
+          }));
+          setMissingDataAlert({ isOpen: true, items });
+          return;
+        }
+      }
       setFeedback({ type: 'error', message: err?.message || 'Bulk student assignment failed.' });
     }
   };
@@ -2861,6 +2925,20 @@ export const SuperAdminPortal: React.FC = () => {
           onClose={() => setInspectStudentId(null)}
         />
       )}
+      {/* ========================================================================= */}
+      {/* MODAL: MISSING DATA ALERT (PRE-REQUISITE ENTITIES MISSING POPUP) */}
+      {/* ========================================================================= */}
+      <MissingDataAlertModal
+        isOpen={missingDataAlert.isOpen}
+        onClose={() => setMissingDataAlert(prev => ({ ...prev, isOpen: false }))}
+        missingItems={missingDataAlert.items}
+        onAction={() => {
+          setActiveTab('DEPARTMENTS');
+          setMissingDataAlert(prev => ({ ...prev, isOpen: false }));
+          setBulkIntakeModal(false);
+        }}
+        actionLabel="Go to Academic Departments"
+      />
 
     </div>
   );

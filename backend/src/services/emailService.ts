@@ -12,13 +12,19 @@ function getResend(): Resend {
 
 function getSmtpTransporter(): Transporter {
   if (!_transporter) {
-    if (env.SMTP_HOST === 'smtp.gmail.com' || env.EMAIL_PROVIDER === 'gmail') {
+    const isGmail = env.SMTP_HOST === 'smtp.gmail.com' || env.EMAIL_PROVIDER === 'gmail';
+    if (isGmail) {
       _transporter = nodemailer.createTransport({
-        service: 'gmail',
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true,
         auth: {
           user: env.SMTP_USER,
           pass: env.SMTP_PASS,
         },
+        tls: {
+          rejectUnauthorized: false
+        }
       });
     } else {
       _transporter = nodemailer.createTransport({
@@ -29,6 +35,9 @@ function getSmtpTransporter(): Transporter {
           user: env.SMTP_USER,
           pass: env.SMTP_PASS,
         },
+        tls: {
+          rejectUnauthorized: false
+        }
       });
     }
   }

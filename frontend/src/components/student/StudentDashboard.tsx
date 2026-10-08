@@ -384,12 +384,23 @@ export const StudentDashboard: React.FC = () => {
       }
     }
     if (asg.targetScope === 'ALL_STUDENTS') return true;
+
+    // BATCH-WISE targeting
+    if (asg.targetScope === 'BATCH') {
+      const bYear = String(student.batchYear || '2026');
+      if (asg.targetDomainOrTrack && asg.targetDomainOrTrack.includes(bYear)) return true;
+      if (asg.targetProgramName && asg.targetProgramName.includes(bYear)) return true;
+      // If no explicit batch constraint specified in domain string, default to true
+      return !asg.targetDomainOrTrack || asg.targetDomainOrTrack.includes('Batch');
+    }
+
     if (asg.targetScope === 'SPECIFIC_STUDENT') {
-      return asg.targetStudentId === student.id || 
-             asg.targetStudentId === student.rollNumber ||
-             asg.targetStudentName === student.name ||
-             Boolean(asg.targetStudentId && student.email && asg.targetStudentId.toLowerCase() === student.email.toLowerCase()) ||
-             Boolean(asg.targetDomainOrTrack && student.name && asg.targetDomainOrTrack.toLowerCase().includes(student.name.toLowerCase()));
+      const matchId = asg.targetStudentId === student.id || asg.targetStudentId === student.rollNumber;
+      const matchName = Boolean(asg.targetStudentName && student.name && asg.targetStudentName.toLowerCase() === student.name.toLowerCase());
+      const matchEmail = Boolean(asg.targetStudentId && student.email && asg.targetStudentId.toLowerCase() === student.email.toLowerCase());
+      const matchDomain = Boolean(asg.targetDomainOrTrack && student.name && asg.targetDomainOrTrack.toLowerCase().includes(student.name.toLowerCase()));
+      const matchRollInDomain = Boolean(asg.targetDomainOrTrack && student.rollNumber && asg.targetDomainOrTrack.toLowerCase().includes(student.rollNumber.toLowerCase()));
+      return matchId || matchName || matchEmail || matchDomain || matchRollInDomain;
     }
     if (asg.targetScope === 'MY_MENTEES') {
       return student.mentorEmail === asg.assignedByEmail || student.mentorName === asg.assignedByName || true;
@@ -426,36 +437,73 @@ export const StudentDashboard: React.FC = () => {
       return true;
     }
     if (asg.targetScope === 'DEPARTMENT') {
-      // 1. Multi-department array matching
+      // Helper for normalizing department names with common aliases
+      const normDept = (d: string) => {
+        const lower = (d || '').toLowerCase();
+        if (lower.includes('comp') || lower.includes('cse')) return 'cse';
+        if (lower.includes('info') || lower.includes('it')) return 'it';
+        if (lower.includes('ai') || lower.includes('data')) return 'aids';
+        if ((lower.includes('electr') && lower.includes('comm')) || lower.includes('ece')) return 'ece';
+        if ((lower.includes('electr') && lower.includes('electr')) || lower.includes('eee')) return 'eee';
+        if (lower.includes('mech')) return 'mech';
+        return lower;
+      };
+
+      const stuDeptKey = normDept(student.department || '');
       let deptMatches = false;
+
       if (asg.targetDepartments && asg.targetDepartments.length > 0) {
-        deptMatches = asg.targetDepartments.some(d => 
-          !student.department || (student.department.toLowerCase().includes(d.toLowerCase()) || d.toLowerCase().includes(student.department.toLowerCase()))
-        );
+        deptMatches = asg.targetDepartments.some(d => {
+          if (!student.department) return true;
+          return normDept(d) === stuDeptKey ||
+                 student.department.toLowerCase().includes(d.toLowerCase()) ||
+                 d.toLowerCase().includes(student.department.toLowerCase());
+        });
       } else {
         const deptTarget = asg.targetDepartment || asg.targetDomainOrTrack;
         if (!deptTarget || !student.department) deptMatches = true;
-        else deptMatches = Boolean(student.department.toLowerCase().includes(deptTarget.toLowerCase()) || deptTarget.toLowerCase().includes(student.department.toLowerCase()));
+        else {
+          deptMatches = Boolean(
+            normDept(deptTarget) === stuDeptKey ||
+            student.department.toLowerCase().includes(deptTarget.toLowerCase()) ||
+            deptTarget.toLowerCase().includes(student.department.toLowerCase())
+          );
+        }
       }
 
       if (!deptMatches) return false;
 
       // Class-specific filtering within department (only if targetClassNames/targetClassName is explicitly set)
       if (asg.targetClassNames && asg.targetClassNames.length > 0) {
-        return asg.targetClassNames.some(cls => cls.toLowerCase() === (student.className || '').toLowerCase());
+        if (!student.className) return true;
+        return asg.targetClassNames.some(cls => 
+          cls.toLowerCase() === (student.className || '').toLowerCase() ||
+          (student.className || '').toLowerCase().includes(cls.toLowerCase()) ||
+          cls.toLowerCase().includes((student.className || '').toLowerCase())
+        );
       }
       if (asg.targetClassName && asg.targetClassName.trim() !== '') {
-        return asg.targetClassName.toLowerCase() === (student.className || '').toLowerCase();
+        if (!student.className) return true;
+        return asg.targetClassName.toLowerCase() === (student.className || '').toLowerCase() ||
+               (student.className || '').toLowerCase().includes(asg.targetClassName.toLowerCase()) ||
+               asg.targetClassName.toLowerCase().includes((student.className || '').toLowerCase());
       }
       return true;
     }
 
     if (asg.targetScope === 'CLASS') {
+      if (!student.className) return true;
       if (asg.targetClassNames && asg.targetClassNames.length > 0) {
-        return asg.targetClassNames.some(cls => cls.toLowerCase() === (student.className || '').toLowerCase());
+        return asg.targetClassNames.some(cls => 
+          cls.toLowerCase() === (student.className || '').toLowerCase() ||
+          (student.className || '').toLowerCase().includes(cls.toLowerCase()) ||
+          cls.toLowerCase().includes((student.className || '').toLowerCase())
+        );
       }
       if (asg.targetClassName) {
-        return asg.targetClassName.toLowerCase() === (student.className || '').toLowerCase();
+        return asg.targetClassName.toLowerCase() === (student.className || '').toLowerCase() ||
+               (student.className || '').toLowerCase().includes(asg.targetClassName.toLowerCase()) ||
+               asg.targetClassName.toLowerCase().includes((student.className || '').toLowerCase());
       }
       return true;
     }
@@ -1423,19 +1471,25 @@ export const StudentDashboard: React.FC = () => {
             </div>
 
             <div>
-              <h2 className="text-xl font-semibold tracking-tight text-white">
-                Launch Mock Interview
+              <h2 className="text-xl font-semibold tracking-tight text-white flex items-center space-x-2">
+                <span>Launch Mock Interview</span>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  Resume-Based
+                </span>
               </h2>
+              <p className="text-xs text-neutral-400 mt-1">
+                Personalized drill strictly based on your uploaded resume projects, tech stack &amp; problem-solving experience.
+              </p>
             </div>
 
             <div className="grid grid-cols-3 gap-2 pt-2">
               <div className="bg-neutral-900/90 border border-neutral-800 rounded-xl p-2.5 text-center">
-                <p className="text-[10px] text-neutral-400 uppercase tracking-wider font-mono">Mode</p>
-                <p className="text-xs font-medium text-neutral-200 mt-0.5">Voice-to-Voice</p>
+                <p className="text-[10px] text-neutral-400 uppercase tracking-wider font-mono">Source</p>
+                <p className="text-xs font-medium text-emerald-300 mt-0.5 truncate">Personal Resume</p>
               </div>
               <div className="bg-neutral-900/90 border border-neutral-800 rounded-xl p-2.5 text-center">
-                <p className="text-[10px] text-neutral-400 uppercase tracking-wider font-mono">Turns</p>
-                <p className="text-xs font-medium text-neutral-200 mt-0.5">3 Adaptive Turns</p>
+                <p className="text-[10px] text-neutral-400 uppercase tracking-wider font-mono">Format</p>
+                <p className="text-xs font-medium text-neutral-200 mt-0.5">Voice AI Session</p>
               </div>
               <div className="bg-neutral-900/90 border border-neutral-800 rounded-xl p-2.5 text-center">
                 <p className="text-[10px] text-neutral-400 uppercase tracking-wider font-mono">Proctoring</p>
@@ -1462,7 +1516,7 @@ export const StudentDashboard: React.FC = () => {
                 if (typeof document !== 'undefined' && !document.fullscreenElement && document.documentElement.requestFullscreen) {
                   document.documentElement.requestFullscreen().catch(() => {});
                 }
-                startInterview('MOCK_INTERVIEW');
+                startInterview('MOCK_INTERVIEW', { isResumeBased: true, assignment: null });
               }}
               className={`inline-flex items-center justify-center space-x-2 font-semibold px-5 py-2.5 rounded-xl text-xs transition-all shadow-sm ${
                 (student.coins ?? 5) < 1
@@ -1471,7 +1525,7 @@ export const StudentDashboard: React.FC = () => {
               }`}
             >
               <Mic className="w-3.5 h-3.5" />
-              <span>{(student.coins ?? 5) < 1 ? '0 Coins - Balance Required' : 'Launch Mock Interview'}</span>
+              <span>{(student.coins ?? 5) < 1 ? '0 Coins - Balance Required' : 'Launch Resume Mock Interview'}</span>
               <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
             </button>
           </div>
@@ -1525,7 +1579,7 @@ export const StudentDashboard: React.FC = () => {
                   alert("Insufficient Coins: You need at least 1 coin to attend an interview or communication session. Your balance is 0 Coins.");
                   return;
                 }
-                startInterview('LISTENING_COMPREHENSION');
+                startInterview('LISTENING_COMPREHENSION', { assignment: null });
               }}
               className={`inline-flex items-center justify-center space-x-2 font-semibold px-5 py-2.5 rounded-xl text-xs transition-all shadow-xs ${
                 (student.coins ?? 5) < 1
@@ -1588,7 +1642,7 @@ export const StudentDashboard: React.FC = () => {
                 if (typeof document !== 'undefined' && !document.fullscreenElement && document.documentElement.requestFullscreen) {
                   document.documentElement.requestFullscreen().catch(() => {});
                 }
-                startInterview('MOCK_INTERVIEW');
+                startInterview('MOCK_INTERVIEW', { isResumeBased: true, assignment: null });
               }}
               className="mt-2 inline-flex items-center space-x-2 px-4 py-2 bg-neutral-900 hover:bg-black text-white rounded-xl text-xs font-semibold transition-all shadow-xs cursor-pointer"
             >

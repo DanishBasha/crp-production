@@ -18,20 +18,22 @@ import {
   Check,
   CheckCircle2,
   User,
-  Users
+  Users,
+  FileSpreadsheet
 } from 'lucide-react';
 import { useBackHandler } from '../../hooks/useBackHandler';
 import { DatePicker } from './DatePicker';
 import { TimePicker } from './TimePicker';
 import { DifficultySelect } from './DifficultySelect';
 import { PassageSelect } from './PassageSelect';
+import { MissingDataAlertModal } from './MissingDataAlertModal';
 
 export interface AssignSessionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: (asg: InterviewAssignment) => void;
   defaultRole?: 'SUPER_ADMIN' | 'PLACEMENT_COORDINATOR' | 'PROGRAM_ADMIN' | 'FACULTY_MENTOR' | 'DEPARTMENT_ADMIN' | 'COUNSELLOR';
-  defaultTargetScope?: 'ALL_STUDENTS' | 'PROGRAM' | 'DEPARTMENT' | 'MY_MENTEES' | 'SPECIFIC_STUDENT' | 'CLASS';
+  defaultTargetScope?: 'ALL_STUDENTS' | 'BATCH' | 'PROGRAM' | 'DEPARTMENT' | 'MY_MENTEES' | 'SPECIFIC_STUDENT' | 'CLASS' | 'BULK_EXCEL';
   defaultProgramName?: string;
   defaultDepartment?: string;
   defaultDomain?: string;
@@ -91,10 +93,25 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
     ? 'ALL_STUDENTS' 
     : 'PROGRAM';
 
-  const [targetScope, setTargetScope] = useState<'ALL_STUDENTS' | 'PROGRAM' | 'DEPARTMENT' | 'MY_MENTEES' | 'SPECIFIC_STUDENT' | 'CLASS'>(initialScope);
+  const [targetScope, setTargetScope] = useState<'ALL_STUDENTS' | 'BATCH' | 'PROGRAM' | 'DEPARTMENT' | 'MY_MENTEES' | 'SPECIFIC_STUDENT' | 'CLASS' | 'BULK_EXCEL'>(initialScope as any);
 
   const [programs, setPrograms] = useState<DynamicProgram[]>([]);
   const [selectedProgNames, setSelectedProgNames] = useState<string[]>([]);
+
+  // Batch-Wise Target state
+  const [selectedBatches, setSelectedBatches] = useState<number[]>([2026]);
+  const AVAILABLE_BATCHES = [2024, 2025, 2026, 2027, 2028];
+
+  // Bulk CSV Intake state
+  const [bulkCsvText, setBulkCsvText] = useState('');
+
+  // Missing Data Alert Modal state
+  const [missingDataAlert, setMissingDataAlert] = useState<{
+    isOpen: boolean;
+    items: Array<{ type: 'department' | 'program' | 'class' | 'student'; name: string }>;
+  }>({ isOpen: false, items: [] });
+
+  const [dynamicDepartments, setDynamicDepartments] = useState<string[]>([]);
 
   const [selectedDepartments, setSelectedDepartments] = useState<string[]>(
     defaultDepartment ? [defaultDepartment] : ['Computer Science & Engineering']
@@ -144,14 +161,15 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const ALL_DEPARTMENTS = [
+  const ALL_DEPARTMENTS = Array.from(new Set([
+    ...dynamicDepartments,
     'Computer Science & Engineering',
     'Information Technology',
     'AI & Data Science',
     'Electronics & Communication',
     'Electrical & Electronics',
     'Mechanical Engineering'
-  ];
+  ]));
 
   useEffect(() => {
     if (isOpen) {
@@ -163,7 +181,7 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
         if (defaultClassName) {
           setSelectedClasses([defaultClassName]);
         }
-      } else if (defaultTargetScope === 'MY_MENTEES' || defaultTargetScope === 'DEPARTMENT' || defaultTargetScope === 'ALL_STUDENTS' || defaultTargetScope === 'PROGRAM') {
+      } else if (defaultTargetScope === 'MY_MENTEES' || defaultTargetScope === 'DEPARTMENT' || defaultTargetScope === 'ALL_STUDENTS' || defaultTargetScope === 'PROGRAM' || defaultTargetScope === 'BATCH' || defaultTargetScope === 'BULK_EXCEL') {
         setTargetScope(defaultTargetScope);
       } else if (defaultDepartment) {
         setTargetScope('DEPARTMENT');
@@ -180,7 +198,8 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
         setSelectedClasses(defaultClassNames);
       }
 
-      api.college.getPrograms(currentUser?.collegeId || 'col-1').then(progs => {
+      const colId = currentUser?.collegeId || 'col-1';
+      api.college.getPrograms(colId).then(progs => {
         if (progs && progs.length > 0) {
           setPrograms(progs);
           if (defaultProgramName && progs.some(p => p.name === defaultProgramName)) {
@@ -195,6 +214,18 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
           if (!defaultProgramName && (defaultTargetScope === 'PROGRAM' || !defaultTargetScope)) {
             setTargetScope('DEPARTMENT');
           }
+        }
+      }).catch(() => {});
+
+      api.college.getDepartments(colId).then(depts => {
+        if (depts && depts.length > 0) {
+          setDynamicDepartments(depts.map(d => d.name));
+        }
+      }).catch(() => {});
+
+      api.college.getClasses(undefined, colId).then((clsList: any[]) => {
+        if (clsList && clsList.length > 0) {
+          setAllDepartmentClasses(clsList);
         }
       }).catch(() => {});
     }
@@ -247,9 +278,70 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
       return;
     }
 
+    if (targetScope === 'BULK_EXCEL') {
+      if (!bulkCsvText.trim()) {
+        setError('Please paste or enter CSV/Excel student roster text.');
+        return;
+      }
+
+      // Pre-validate CSV lines against existing entities
+      const lines = bulkCsvText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+      const availableDepts = new Set(ALL_DEPARTMENTS.map(d => (d || '').toLowerCase().trim()));
+      const availableProgs = new Set(programs.map(p => (p.name || '').toLowerCase().trim()));
+      const availableCls = new Set(allDepartmentClasses.map(c => (c.name || '').toLowerCase().trim()));
+      const missing: Array<{ type: 'department' | 'program' | 'class' | 'student'; name: string }> = [];
+      const seen = new Set<string>();
+
+      let startIdx = 0;
+      let headerCols: string[] = [];
+      if (lines.length > 0 && (lines[0].toLowerCase().includes('name') || lines[0].toLowerCase().includes('email'))) {
+        startIdx = 1;
+        headerCols = lines[0].split(',').map(c => c.trim().toLowerCase().replace(/^["']|["']$/g, ''));
+      }
+
+      for (let i = startIdx; i < lines.length; i++) {
+        const cols = lines[i].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+        if (cols.length < 2) continue;
+        let deptVal = '';
+        let progVal = '';
+        let clsVal = '';
+
+        if (headerCols.length > 0) {
+          headerCols.forEach((col, idx) => {
+            const val = cols[idx] || '';
+            if (col.includes('dept') || col.includes('department')) deptVal = val.trim();
+            else if (col.includes('program')) progVal = val.trim();
+            else if (col.includes('class') || col.includes('section')) clsVal = val.trim();
+          });
+        } else {
+          if (cols.length >= 4) deptVal = cols[3]?.trim();
+          if (cols.length >= 3) progVal = cols[2]?.trim();
+          if (cols.length >= 5) clsVal = cols[4]?.trim();
+        }
+
+        if (deptVal && availableDepts.size > 0 && !availableDepts.has(deptVal.toLowerCase()) && !seen.has(`dept:${deptVal.toLowerCase()}`)) {
+          seen.add(`dept:${deptVal.toLowerCase()}`);
+          missing.push({ type: 'department', name: deptVal });
+        }
+        if (progVal && availableProgs.size > 0 && !availableProgs.has(progVal.toLowerCase()) && !seen.has(`prog:${progVal.toLowerCase()}`)) {
+          seen.add(`prog:${progVal.toLowerCase()}`);
+          missing.push({ type: 'program', name: progVal });
+        }
+        if (clsVal && availableCls.size > 0 && !availableCls.has(clsVal.toLowerCase()) && !seen.has(`class:${clsVal.toLowerCase()}`)) {
+          seen.add(`class:${clsVal.toLowerCase()}`);
+          missing.push({ type: 'class', name: clsVal });
+        }
+      }
+
+      if (missing.length > 0) {
+        setMissingDataAlert({ isOpen: true, items: missing });
+        return;
+      }
+    }
+
     if (targetScope === 'PROGRAM') {
       if (programs.length === 0) {
-        setError('No institutional programs available yet. Please select Department-Wise or College-Wide.');
+        setMissingDataAlert({ isOpen: true, items: [{ type: 'program', name: 'Institutional Training Programs' }] });
         return;
       }
       if (selectedProgNames.length === 0) {
@@ -263,6 +355,11 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
       return;
     }
 
+    if (targetScope === 'BATCH' && selectedBatches.length === 0) {
+      setError('Please select at least one graduation batch year.');
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
 
@@ -272,6 +369,11 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
       targetDomainOrTrack = targetStudent 
         ? `${targetStudent.name} (${clsName})`
         : `${selectedDepartments[0] || defaultDepartment || 'Department'} · Class: ${clsName}`;
+    } else if (targetScope === 'BATCH') {
+      targetDomainOrTrack = `Batch ${selectedBatches.join(', ')}`;
+    } else if (targetScope === 'BULK_EXCEL') {
+      const rowCount = bulkCsvText.split(/\r?\n/).filter(l => l.trim().length > 0).length;
+      targetDomainOrTrack = `Bulk Intake (${rowCount} Candidates)`;
     } else if (targetScope === 'PROGRAM') {
       targetDomainOrTrack = selectedProgNames.length === 1 
         ? selectedProgNames[0]
@@ -299,7 +401,7 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
         assignedByEmail: currentUser?.email,
         assignedById: currentUser?.id,
         collegeId: currentUser?.collegeId || 'col-1',
-        targetScope: isClassLocked ? (targetStudent ? 'SPECIFIC_STUDENT' : 'CLASS') : targetScope,
+        targetScope: isClassLocked ? (targetStudent ? 'SPECIFIC_STUDENT' : 'CLASS') : (targetScope === 'BULK_EXCEL' ? 'ALL_STUDENTS' : targetScope),
         targetDomainOrTrack,
         targetProgramName: targetScope === 'PROGRAM' ? selectedProgNames[0] : undefined,
         targetProgramNames: targetScope === 'PROGRAM' ? selectedProgNames : undefined,
@@ -573,20 +675,20 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
                 </span>
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 <button
                   type="button"
-                  onClick={() => setTargetScope('PROGRAM')}
+                  onClick={() => setTargetScope('BATCH')}
                   className={`p-2.5 rounded-xl border text-center font-medium transition-all cursor-pointer flex flex-col items-center justify-center space-y-1 ${
-                    targetScope === 'PROGRAM' ? 'bg-neutral-900 text-white border-neutral-900 shadow-xs' : 'bg-neutral-50 hover:bg-neutral-100 border-neutral-200 text-neutral-700'
+                    targetScope === 'BATCH' ? 'bg-neutral-900 text-white border-neutral-900 shadow-xs' : 'bg-neutral-50 hover:bg-neutral-100 border-neutral-200 text-neutral-700'
                   }`}
                 >
                   <div className="flex items-center space-x-1.5">
-                    <Layers className="w-3.5 h-3.5" />
-                    <span className="text-xs font-semibold">Program Students</span>
+                    <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-xs font-semibold">Batch-Wise</span>
                   </div>
-                  <span className={`text-[10px] ${targetScope === 'PROGRAM' ? 'text-neutral-300' : 'text-neutral-400'}`}>
-                    {programs.length > 0 ? `${programs.length} configured` : 'Configure in Programs tab'}
+                  <span className={`text-[10px] ${targetScope === 'BATCH' ? 'text-neutral-300' : 'text-neutral-400'}`}>
+                    Graduation years
                   </span>
                 </button>
 
@@ -598,11 +700,43 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
                   }`}
                 >
                   <div className="flex items-center space-x-1.5">
-                    <Building2 className="w-3.5 h-3.5" />
+                    <Building2 className="w-3.5 h-3.5 text-purple-400" />
                     <span className="text-xs font-semibold">Department-Wise</span>
                   </div>
                   <span className={`text-[10px] ${targetScope === 'DEPARTMENT' ? 'text-neutral-300' : 'text-neutral-400'}`}>
-                    Multi-department select
+                    Depts &amp; classes
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setTargetScope('PROGRAM')}
+                  className={`p-2.5 rounded-xl border text-center font-medium transition-all cursor-pointer flex flex-col items-center justify-center space-y-1 ${
+                    targetScope === 'PROGRAM' ? 'bg-neutral-900 text-white border-neutral-900 shadow-xs' : 'bg-neutral-50 hover:bg-neutral-100 border-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <div className="flex items-center space-x-1.5">
+                    <Layers className="w-3.5 h-3.5 text-blue-400" />
+                    <span className="text-xs font-semibold">Program-Wise</span>
+                  </div>
+                  <span className={`text-[10px] ${targetScope === 'PROGRAM' ? 'text-neutral-300' : 'text-neutral-400'}`}>
+                    {programs.length > 0 ? `${programs.length} tracks` : 'Configure tracks'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setTargetScope('BULK_EXCEL')}
+                  className={`p-2.5 rounded-xl border text-center font-medium transition-all cursor-pointer flex flex-col items-center justify-center space-y-1 ${
+                    targetScope === 'BULK_EXCEL' ? 'bg-neutral-900 text-white border-neutral-900 shadow-xs' : 'bg-neutral-50 hover:bg-neutral-100 border-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  <div className="flex items-center space-x-1.5">
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-xs font-semibold">Bulk CSV / Excel</span>
+                  </div>
+                  <span className={`text-[10px] ${targetScope === 'BULK_EXCEL' ? 'text-neutral-300' : 'text-neutral-400'}`}>
+                    Paste candidate list
                   </span>
                 </button>
 
@@ -614,13 +748,132 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
                   }`}
                 >
                   <div className="flex items-center space-x-1.5">
-                    <Globe className="w-3.5 h-3.5" />
+                    <Globe className="w-3.5 h-3.5 text-cyan-400" />
                     <span className="text-xs font-semibold">College-Wide</span>
                   </div>
                   <span className={`text-[10px] ${targetScope === 'ALL_STUDENTS' ? 'text-neutral-300' : 'text-neutral-400'}`}>
-                    All enrolled batches
+                    All batches
                   </span>
                 </button>
+              </div>
+            )}
+
+            {/* Target Scope: BATCH-WISE Selection Card */}
+            {targetScope === 'BATCH' && !isProgramLocked && !isClassLocked && (
+              <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200/90 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Calendar className="w-4 h-4 text-amber-600" />
+                    <label className="text-xs font-bold text-neutral-900">
+                      Select Target Batches ({selectedBatches.length} selected)
+                    </label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedBatches.length === AVAILABLE_BATCHES.length) {
+                          setSelectedBatches([2026]);
+                        } else {
+                          setSelectedBatches([...AVAILABLE_BATCHES]);
+                        }
+                      }}
+                      className="text-[11px] text-amber-700 hover:text-amber-900 font-semibold cursor-pointer"
+                    >
+                      {selectedBatches.length === AVAILABLE_BATCHES.length ? 'Reset to Default' : 'Select All Batches'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {AVAILABLE_BATCHES.map(year => {
+                    const isSel = selectedBatches.includes(year);
+                    return (
+                      <button
+                        key={year}
+                        type="button"
+                        onClick={() => {
+                          if (isSel) {
+                            if (selectedBatches.length > 1) {
+                              setSelectedBatches(selectedBatches.filter(y => y !== year));
+                            }
+                          } else {
+                            setSelectedBatches([...selectedBatches, year]);
+                          }
+                        }}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center space-x-2 ${
+                          isSel 
+                            ? 'bg-neutral-900 text-white border-neutral-900 shadow-xs' 
+                            : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-300'
+                        }`}
+                      >
+                        <span className={`w-2 h-2 rounded-full ${isSel ? 'bg-amber-400' : 'bg-neutral-300'}`} />
+                        <span>Batch of {year}</span>
+                        {isSel && <Check className="w-3.5 h-3.5 text-amber-400 ml-1" />}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-neutral-500">
+                  Assessment drill will be dispatched strictly to all active candidates enrolled under the selected graduation year(s).
+                </p>
+              </div>
+            )}
+
+            {/* Target Scope: BULK EXCEL / CSV Intake Card */}
+            {targetScope === 'BULK_EXCEL' && !isProgramLocked && !isClassLocked && (
+              <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200/90 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                    <label className="text-xs font-bold text-neutral-900">
+                      Paste or Upload Candidate Roster (CSV / Excel Format)
+                    </label>
+                  </div>
+                  <label className="text-[11px] text-emerald-700 hover:text-emerald-900 font-semibold cursor-pointer underline flex items-center space-x-1">
+                    <span>Upload .CSV File</span>
+                    <input
+                      type="file"
+                      accept=".csv,text/csv,text/plain"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            setBulkCsvText(String(ev.target?.result || ''));
+                          };
+                          reader.readAsText(file);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+
+                <textarea
+                  rows={5}
+                  value={bulkCsvText}
+                  onChange={(e) => setBulkCsvText(e.target.value)}
+                  placeholder="Name, Email, RollNumber, Department, Class, BatchYear&#10;Alice Smith, alice@college.edu, 21CS101, Computer Science & Engineering, CSE-A, 2026&#10;Bob Jones, bob@college.edu, 21CS102, Information Technology, IT-B, 2026"
+                  className="w-full bg-white border border-neutral-300 rounded-xl p-3 font-mono text-[11px] text-neutral-900 focus:outline-none focus:border-neutral-900 shadow-2xs"
+                />
+
+                <div className="flex items-center justify-between text-[10px] text-neutral-500 pt-0.5">
+                  <span>Columns: <code>Name, Email, RollNumber, Department, Class, Batch</code></span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkCsvText(
+                        `Name, Email, RollNumber, Department, Class, BatchYear\n` +
+                        `Rahul Sharma, rahul.sharma@college.edu, 22CS0101, Computer Science & Engineering, CSE-A, 2026\n` +
+                        `Priya Patel, priya.patel@college.edu, 22IT0204, Information Technology, IT-B, 2026`
+                      );
+                    }}
+                    className="text-blue-600 hover:underline font-medium cursor-pointer"
+                  >
+                    Load Sample Roster
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1075,6 +1328,20 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
 
         </form>
       </div>
+
+      {/* ========================================================================= */}
+      {/* MODAL: MISSING DATA ALERT (PRE-REQUISITE ENTITIES MISSING POPUP) */}
+      {/* ========================================================================= */}
+      <MissingDataAlertModal
+        isOpen={missingDataAlert.isOpen}
+        onClose={() => setMissingDataAlert(prev => ({ ...prev, isOpen: false }))}
+        missingItems={missingDataAlert.items}
+        onAction={() => {
+          setMissingDataAlert(prev => ({ ...prev, isOpen: false }));
+        }}
+        actionLabel="Review & Add Missing Data"
+      />
+
     </div>
   );
 };
