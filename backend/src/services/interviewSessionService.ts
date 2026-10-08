@@ -16,7 +16,7 @@ import { Events, AttemptCompletedPayload } from '../shared/events/events';
 import { sessionContextService, InterviewState, InterviewResume } from './sessionContextService';
 import type { InterviewReport } from './interviewReport';
 import { getCoins, spendCoin, refundCoin } from './coinService';
-import { CreditService } from '../modules/credits/credits.service';
+import { getCurrentResume, getStoredResumeData } from './resumeService';
 
 export const FIRST_QUESTION =
   "Tell me about yourself. Walk me through your background, the key skills you've built, and what you've been working on most recently.";
@@ -55,11 +55,16 @@ export interface AttemptScores {
 export async function createAttemptAndSession(
   student: StudentContext,
 ): Promise<{ attemptId: string; sessionId: string }> {
-  const { rows: assessmentRows } = await db.query<{ id: string }>(
+  let { rows: assessmentRows } = await db.query<{ id: string }>(
     `SELECT id FROM assessment.assessments WHERE is_active = true ORDER BY created_at LIMIT 1`
   );
   if (assessmentRows.length === 0) {
-    throw new AppError(503, 'No active assessment configuration found', 'NO_ASSESSMENT');
+    // A fresh database has no assessment yet: create the standard one, as POST /interview does
+    ({ rows: assessmentRows } = await db.query<{ id: string }>(
+      `INSERT INTO assessment.assessments (name, assessment_type, interview_type, is_active)
+       VALUES ('Standard Technical Assessment', 'MOCK_INTERVIEW', 'TECHNICAL', true)
+       RETURNING id`
+    ));
   }
 
   const client = await db.connect();
@@ -115,52 +120,96 @@ export async function createAttemptAndSession(
 
 // ── Start a live (voice) interview for the logged-in student ─────────────────
 
-// Resume details sent by the client (parsed in the browser) or stored in org.resumes.
+// Resume details a client may still send with the start request. They are ignored:
+// the interview uses only the resume the server read and parsed itself (org.resumes),
+// so questions never rest on skills or projects the student did not write.
 export interface ResumeInput {
   skills?: string[];
   projects?: { title: string; techStack?: string[]; description?: string }[];
 }
 
+const RESUME_EXCERPT_CHARS = 3000;
+
 const cleanList = (values: unknown[] | undefined, max: number) =>
   (values ?? []).filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
     .map((v) => v.trim().slice(0, 80)).slice(0, max);
 
-async function loadResume(studentId: string, name: string, provided?: ResumeInput): Promise<InterviewResume> {
-  let source = provided;
-  if (!source?.skills?.length && !source?.projects?.length) {
-    // 1. First check org.students.resume_data
-    try {
-      const { rows: stuRows } = await db.query<{ resume_data: ResumeInput | null }>(
-        'SELECT resume_data FROM org.students WHERE id = $1 OR user_id = $1',
-        [studentId]
-      );
-      if (stuRows[0]?.resume_data?.skills?.length || stuRows[0]?.resume_data?.projects?.length) {
-        source = stuRows[0].resume_data;
-      }
-    } catch {}
-  }
-  if (!source?.skills?.length && !source?.projects?.length) {
-    // 2. Fall back to the parsed data of the student's current uploaded resume, if any
-    try {
-      const { rows } = await db.query<{ parsed_data: ResumeInput | null }>(
-        'SELECT parsed_data FROM org.resumes WHERE student_id = $1 AND is_current = true ORDER BY created_at DESC LIMIT 1',
-        [studentId]
-      );
-      source = rows[0]?.parsed_data ?? undefined;
-    } catch {}
-  }
+async function loadResume(studentId: string, name: string): Promise<InterviewResume> {
+  const current = await getCurrentResume(studentId);
+  const view = current?.view ?? await getStoredResumeData(studentId);
+  if (!view) return { name, skills: [], projects: [] };
+  const { skills, projects, experience } = view;
   return {
     name,
-    skills: cleanList(source?.skills, 20),
-    projects: (source?.projects ?? []).slice(0, 5).map((p) => ({
-      title: String(p.title ?? '').slice(0, 120),
-      tech_stack: cleanList(p.techStack, 10),
-      description: String(p.description ?? '').slice(0, 400),
-    })).filter((p) => p.title),
+    skills: cleanList([...skills.languages, ...skills.frameworks, ...skills.databases, ...skills.tools], 20),
+    projects: [
+      ...projects.slice(0, 6).map((p) => ({
+        title: p.title.slice(0, 120),
+        tech_stack: cleanList(p.techStack, 10),
+        description: p.description.slice(0, 400),
+      })),
+      // Internships and jobs are interview topics too
+      ...experience.slice(0, 3).map((e) => ({
+        title: [e.title, e.company].filter(Boolean).join(' at ').slice(0, 120),
+        tech_stack: [],
+        description: [e.duration, e.description].filter(Boolean).join(': ').slice(0, 400),
+      })),
+    ].filter((p) => p.title),
+    text: (current?.text ?? '').slice(0, RESUME_EXCERPT_CHARS),
   };
 }
 
-export async function startLiveInterview(userId: string, resumeInput?: ResumeInput, topic?: string): Promise<{
+// Self-practice interviews are about the student's resume; an assignment may fix a topic
+const RESUME_INTERVIEW_TOPICS = new Set(['', 'personal resume & projects', 'general programming']);
+
+// Creates the student record (with a default program and batch) for a user who has none yet
+async function createStudentForUser(userId: string): Promise<(StudentContext & { name: string }) | null> {
+  const { rows: uRows } = await db.query(
+    `SELECT id, name, email, institution_id FROM identity.users WHERE id = $1`,
+    [userId]
+  );
+  if (uRows.length === 0) return null;
+  const u = uRows[0];
+  let instId = u.institution_id;
+  if (!instId) {
+    const { rows: insts } = await db.query(`SELECT id FROM org.institutions ORDER BY created_at DESC LIMIT 1`);
+    instId = insts[0]?.id;
+  }
+  let programId: string | null = null;
+  let batchId: string | null = null;
+  if (instId) {
+    const { rows: progs } = await db.query(`SELECT id, name FROM org.programs WHERE institution_id = $1 LIMIT 1`, [instId]);
+    if (progs.length > 0) {
+      programId = progs[0].id;
+    } else {
+      const { rows: newProg } = await db.query(
+        `INSERT INTO org.programs (institution_id, name, code) VALUES ($1, 'General Engineering', 'GEN') RETURNING id`,
+        [instId]
+      );
+      programId = newProg[0].id;
+    }
+    const { rows: batches } = await db.query(`SELECT id FROM org.batches WHERE program_id = $1 LIMIT 1`, [programId]);
+    if (batches.length > 0) {
+      batchId = batches[0].id;
+    } else {
+      const { rows: newBatch } = await db.query(
+        `INSERT INTO org.batches (program_id, name, year, track) VALUES ($1, 'Batch 2026', 2026, 'General Track') RETURNING id`,
+        [programId]
+      );
+      batchId = newBatch[0].id;
+    }
+  }
+  const roll = `STU${Date.now().toString(36).toUpperCase().slice(-6)}`;
+  const { rows: newStu } = await db.query(
+    `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track)
+     VALUES ($1, $2, $3, $4, 'General Department', 2026, 'General Track')
+     RETURNING id, program_id, batch_id, subdivision_id`,
+    [u.id, programId, batchId, roll]
+  );
+  return newStu.length > 0 ? { ...newStu[0], name: u.name } : null;
+}
+
+export async function startLiveInterview(userId: string, _resumeInput?: ResumeInput, topic?: string): Promise<{
   sessionId: string;
   attemptId: string;
   maxTurns: number;
@@ -174,69 +223,14 @@ export async function startLiveInterview(userId: string, resumeInput?: ResumeInp
      WHERE s.user_id = $1`,
     [userId]
   );
-  let student = rows[0];
-  if (!student) {
-    const { rows: uRows } = await db.query(
-      `SELECT id, name, email, institution_id FROM identity.users WHERE id = $1`,
-      [userId]
-    );
-    if (uRows.length > 0) {
-      const u = uRows[0];
-      let instId = u.institution_id;
-      if (!instId) {
-        const { rows: insts } = await db.query(`SELECT id FROM org.institutions ORDER BY created_at DESC LIMIT 1`);
-        instId = insts[0]?.id;
-      }
-      let programId: string | null = null;
-      let batchId: string | null = null;
-      if (instId) {
-        const { rows: progs } = await db.query(`SELECT id, name FROM org.programs WHERE institution_id = $1 LIMIT 1`, [instId]);
-        if (progs.length > 0) {
-          programId = progs[0].id;
-        } else {
-          const { rows: newProg } = await db.query(
-            `INSERT INTO org.programs (institution_id, name, code) VALUES ($1, 'General Engineering', 'GEN') RETURNING id`,
-            [instId]
-          );
-          programId = newProg[0].id;
-        }
-        const { rows: batches } = await db.query(`SELECT id FROM org.batches WHERE program_id = $1 LIMIT 1`, [programId]);
-        if (batches.length > 0) {
-          batchId = batches[0].id;
-        } else {
-          const { rows: newBatch } = await db.query(
-            `INSERT INTO org.batches (program_id, name, year, track) VALUES ($1, 'Batch 2026', 2026, 'General Track') RETURNING id`,
-            [programId]
-          );
-          batchId = newBatch[0].id;
-        }
-      }
-      const roll = `STU${Date.now().toString(36).toUpperCase().slice(-6)}`;
-      const { rows: newStu } = await db.query(
-        `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track)
-         VALUES ($1, $2, $3, $4, 'General Department', 2026, 'General Track')
-         RETURNING id, program_id, batch_id, subdivision_id`,
-        [u.id, programId, batchId, roll]
-      );
-      if (newStu.length > 0) {
-        student = { ...newStu[0], name: u.name };
-      }
-    }
-  }
+  const student = rows[0] ?? await createStudentForUser(userId);
   if (!student) throw new AppError(404, 'Student profile not found', 'NOT_FOUND');
 
-  // Check wallet and auto-grant coins if empty so candidate is never blocked
-  let wallet = await getCoins(student.id);
-  if (wallet.coins < 1) {
-    await db.query(
-      'UPDATE credit.credit_accounts SET balance = 50, updated_at = now() WHERE student_id = $1',
-      [student.id]
-    ).catch(() => {});
-    await db.query(
-      'UPDATE org.students SET coins = 5, updated_at = now() WHERE id = $1',
-      [student.id]
-    ).catch(() => {});
-    wallet = await getCoins(student.id);
+  // An empty wallet is refilled so a candidate is never blocked from practising
+  if ((await getCoins(student.id)).coins < 1) {
+    await db.query('UPDATE credit.credit_accounts SET balance = 50, updated_at = now() WHERE student_id = $1', [student.id])
+      .catch(() => {});
+    await db.query('UPDATE org.students SET coins = 5, updated_at = now() WHERE id = $1', [student.id]).catch(() => {});
   }
   const { attemptId, sessionId } = await createAttemptAndSession(student);
   let coinsRemaining: number;
@@ -246,20 +240,21 @@ export async function startLiveInterview(userId: string, resumeInput?: ResumeInp
     await terminateLiveInterview(sessionId, attemptId).catch(() => {});
     throw err;
   }
-  const maxTurns = Math.max(50, env.MAX_QUESTIONS_PER_SESSION || 50);
-  const resume = await loadResume(student.id, student.name, resumeInput)
+  const maxTurns = env.MAX_QUESTIONS_PER_SESSION;
+  const resume = await loadResume(student.id, student.name)
     .catch(() => ({ name: student.name, skills: [], projects: [] }) as InterviewResume);
 
-  const assignedTopic = topic?.trim() || 'General Programming';
+  const assignedTopic = RESUME_INTERVIEW_TOPICS.has((topic ?? '').trim().toLowerCase()) ? '' : topic!.trim().slice(0, 200);
 
   const initialState: InterviewState = {
     session_id: sessionId,
     student_id: student.id,
-    topic_curriculum: [assignedTopic],
+    topic_curriculum: [assignedTopic || 'General Programming'],
     completed_topics: [],
-    active_topic: assignedTopic,
+    active_topic: assignedTopic || 'General Programming',
+    ...(assignedTopic ? { assigned_topic: assignedTopic } : {}),
     active_topic_question_count: 0,
-    max_questions_per_topic: 4,
+    max_questions_per_topic: 3,
     do_not_ask_or_repeat: [FIRST_QUESTION],
     current_turn: 1,
     max_turns: maxTurns,
@@ -279,6 +274,9 @@ export async function startLiveInterview(userId: string, resumeInput?: ResumeInp
     consecutive_ai_failures: 0,
     tab_switches: 0,
     fullscreen_exits: 0,
+    resume_topics_asked: [],
+    follow_ups_in_a_row: 0,
+    current_question_source: 'introduction',
   };
 
   try {
@@ -353,6 +351,7 @@ export async function completeAttempt(
   scores: AttemptScores,
   goal: string,
   componentScores?: Record<string, unknown>,
+  reportData?: unknown,
 ): Promise<boolean> {
   const { rows: attemptRows } = await db.query<{
     student_id: string; program_id: string; batch_id: string; subdivision_id: string | null; status: string;
@@ -380,11 +379,12 @@ export async function completeAttempt(
       `INSERT INTO performance.assessment_reports
          (attempt_id, student_id, assessment_version, scoring_version,
           technical_score, communication_score, listening_score, overall_score,
-          component_scores, skill_scores)
-       VALUES ($1,$2,1,'v1.0',$3,$4,$5,$6,$7,NULL)
+          component_scores, skill_scores, report_data)
+       VALUES ($1,$2,1,'v1.0',$3,$4,$5,$6,$7,NULL,$8)
        ON CONFLICT (attempt_id) DO UPDATE
          SET technical_score=$3, communication_score=$4,
-             listening_score=$5, overall_score=$6`,
+             listening_score=$5, overall_score=$6,
+             report_data=COALESCE($8, performance.assessment_reports.report_data)`,
       [
         attemptId,
         attempt.student_id,
@@ -397,6 +397,7 @@ export async function completeAttempt(
           COMMUNICATION: scores.communicationScore,
           LISTENING: scores.listeningScore,
         }),
+        reportData === undefined ? null : JSON.stringify(reportData),
       ]
     );
     await client.query(
@@ -461,6 +462,8 @@ export async function concludeLiveInterview(
       TAB_SWITCHES: report.tabSwitches,
       QUESTIONS_ANSWERED: report.questionsAnswered,
     },
+    // The learning-plan agent builds the 4-week plan from this evidence
+    report,
   );
 }
 

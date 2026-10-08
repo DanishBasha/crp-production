@@ -13,6 +13,14 @@ _RETRY_AFTER_RE = re.compile(r"try again in ([\d.]+)s", re.IGNORECASE)
 _MAX_RATE_LIMIT_RETRIES = 3
 
 
+def _is_openai_client(client: Any) -> bool:
+    try:
+        from openai import OpenAI
+    except ImportError:  # pragma: no cover
+        return False
+    return isinstance(client, OpenAI)
+
+
 def _rate_limit_wait(exc: Exception, attempt: int) -> float:
     """Return seconds to wait before the next retry.
 
@@ -53,6 +61,8 @@ class OpenAICompatibleProvider(BaseProvider):
 
     # A model that hit its daily token cap (or is unavailable) is skipped this long
     _EXHAUSTED_COOLDOWN_SECONDS = 15 * 60
+    # A key/model pair that hit its per-minute limit is skipped this long before retrying it
+    _BUSY_COOLDOWN_SECONDS = 20
 
     def __init__(
         self,
@@ -121,12 +131,25 @@ class OpenAICompatibleProvider(BaseProvider):
         max_tokens: int | None = None,
     ) -> str:
         last_exc: Exception | None = None
-        for key_index, model in self._candidates():
+        candidates = self._candidates()
+        # With several key/model pairs, a per-minute limit moves straight on to the next
+        # pair instead of waiting (a live interview cannot stall for 10-20 s); the last
+        # pair still waits and retries as before.
+        for position, (key_index, model) in enumerate(candidates):
+            switch_on_busy = position < len(candidates) - 1
             try:
                 return self._chat_complete_with(
-                    self._all_clients()[key_index], model, messages, response_format, temperature, max_tokens)
+                    self._all_clients()[key_index], model, messages, response_format, temperature, max_tokens,
+                    wait_on_rate_limit=not switch_on_busy)
             except Exception as exc:
-                quota_gone = self._is_rate_limit(exc) and self._is_tpd_exhausted(exc)
+                rate_limited = self._is_rate_limit(exc)
+                quota_gone = rate_limited and self._is_tpd_exhausted(exc)
+                if rate_limited and not quota_gone and switch_on_busy:
+                    self._exhausted()[(key_index, model)] = _clock() + self._BUSY_COOLDOWN_SECONDS
+                    print(f"[providers] key #{key_index + 1} model {model} at its per-minute limit; "
+                          "trying the next key/model", flush=True)
+                    last_exc = exc
+                    continue
                 if not (quota_gone or self._is_model_unavailable(exc)):
                     raise
                 self._exhausted()[(key_index, model)] = _clock() + self._EXHAUSTED_COOLDOWN_SECONDS
@@ -144,6 +167,7 @@ class OpenAICompatibleProvider(BaseProvider):
         response_format: dict[str, str] | None,
         temperature: float,
         max_tokens: int | None,
+        wait_on_rate_limit: bool = True,
     ) -> str:
         kwargs: dict[str, Any] = dict(
             model=model,
@@ -154,6 +178,9 @@ class OpenAICompatibleProvider(BaseProvider):
             kwargs["response_format"] = response_format
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
+        if not wait_on_rate_limit and _is_openai_client(client):
+            # The SDK would otherwise sleep through its own 429 retries before we see the error
+            client = client.with_options(max_retries=0)
         for attempt in range(_MAX_RATE_LIMIT_RETRIES + 1):
             try:
                 resp = client.chat.completions.create(**kwargs)
@@ -183,7 +210,7 @@ class OpenAICompatibleProvider(BaseProvider):
                             flush=True,
                         )
                         raise
-                    if attempt < _MAX_RATE_LIMIT_RETRIES:
+                    if wait_on_rate_limit and attempt < _MAX_RATE_LIMIT_RETRIES:
                         time.sleep(_rate_limit_wait(exc, attempt))
                         continue
                 print(

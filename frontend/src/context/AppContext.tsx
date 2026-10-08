@@ -1267,6 +1267,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       setActiveView(type === 'MOCK_INTERVIEW' ? 'INTERVIEW_ROOM' : 'LISTENING_ROOM');
     } catch (err) {
+      if (type === 'MOCK_INTERVIEW') {
+        // A mock interview runs only on the live interview server; never on made-up questions
+        setSessionCoinAtStake(false);
+        if (typeof document !== 'undefined' && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        alert(`Could not start the interview: ${err instanceof Error ? err.message : 'the server is unavailable'}`);
+        return;
+      }
       console.warn('[AppContext] Interview start fallback to dynamic session:', err);
       const proj = student.resume?.projects?.[0]?.title || `${student.track || student.department || 'Technical'} Capstone Project`;
       const lang = student.resume?.skills?.languages?.[0] || 'Core Stack';
@@ -1294,7 +1301,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isCompletedAwaitingEvaluation: false,
         totalTurns: 15
       });
-      setActiveView(type === 'MOCK_INTERVIEW' ? 'INTERVIEW_ROOM' : 'LISTENING_ROOM');
+      setActiveView('LISTENING_ROOM');
     }
   };
 

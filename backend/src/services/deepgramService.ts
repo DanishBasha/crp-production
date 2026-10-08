@@ -18,7 +18,6 @@ interface DeepgramSession {
   meta: AudioStartMeta;
   pendingChunks: Buffer[]; // audio buffered before socket opens
   isOpen: boolean;
-  keepAliveTimer?: NodeJS.Timeout;
 }
 
 const sessions = new Map<string, DeepgramSession>();
@@ -33,8 +32,7 @@ export async function openSession(
   // Close any stale session first
   const existing = sessions.get(sessionId);
   if (existing) {
-    if (existing.keepAliveTimer) clearInterval(existing.keepAliveTimer);
-    try { existing.socket.send(JSON.stringify({ type: 'CloseStream' })); } catch {}
+    try { existing.socket.sendCloseStream({}); } catch {}
     sessions.delete(sessionId);
   }
 
@@ -52,8 +50,8 @@ export async function openSession(
       model: 'nova-3',
       language: 'en',
       interim_results: ListenV1InterimResults.True,
-      utterance_end_ms: 3000,
-      endpointing: 3000,
+      utterance_end_ms: 2500,
+      endpointing: 500,
       smart_format: ListenV1SmartFormat.True,
       vad_events: ListenV1VadEvents.True,
       filler_words: 'true', // keep "um"/"uh" in transcripts — they are scored (blueprint §4.4)
@@ -70,17 +68,6 @@ export async function openSession(
   socket.on('open', () => {
     session.isOpen = true;
     console.log(`[Deepgram] session opened  session=${sessionId}`);
-
-    // Send periodic keepalive payload every 4 seconds so Deepgram never times out during pauses/thinking
-    if (session.keepAliveTimer) clearInterval(session.keepAliveTimer);
-    session.keepAliveTimer = setInterval(() => {
-      if (session.isOpen) {
-        try {
-          session.socket.sendJson({ type: 'KeepAlive' });
-        } catch {}
-      }
-    }, 4000);
-
     // Flush any audio chunks that arrived before the socket opened
     for (const chunk of session.pendingChunks) {
       try { socket.sendMedia(chunk); } catch {}
@@ -99,14 +86,26 @@ export async function openSession(
 
       wsManager.emit(sessionId, {
         type: 'transcript_interim',
-        text: msg.is_final ? session.transcript : (session.transcript ? `${session.transcript} ${words}` : words),
+        text: msg.is_final ? session.transcript : words,
         isFinal: Boolean(msg.is_final),
       });
     } else if (msg?.type === 'UtteranceEnd') {
-      // Natural pause detected by Deepgram: log and preserve transcript.
-      // Do NOT cut off the candidate prematurely; the client silence timer or manual submission finishes the answer.
-      const interim = session.transcript.trim();
-      console.log(`[Deepgram] UtteranceEnd session=${sessionId} len=${interim.length}`);
+      if (session.triggered) return;
+      session.triggered = true;
+
+      // Brief pause: final Results messages from Deepgram can arrive a few hundred
+      // milliseconds after UtteranceEnd, so wait before reading session.transcript.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      // May be empty — the caller decides how to handle a silent turn
+      const finalTranscript = session.transcript.trim();
+      console.log(`[Deepgram] UtteranceEnd  session=${sessionId}  "${finalTranscript.slice(0, 80)}"`);
+
+      try {
+        await onEagerEnd(finalTranscript, meta);
+      } catch (err) {
+        console.error('[Deepgram] onEagerEnd error:', err);
+      }
     }
   });
 
@@ -114,13 +113,9 @@ export async function openSession(
     console.error(`[Deepgram] error  session=${sessionId}:`, err);
   });
 
-  socket.on('close', (event: any) => {
-    session.isOpen = false;
-    if (session.keepAliveTimer) {
-      clearInterval(session.keepAliveTimer);
-      session.keepAliveTimer = undefined;
-    }
-    console.log(`[Deepgram] session closed  session=${sessionId} code=${event?.code} reason=${event?.reason || ''}`);
+  socket.on('close', () => {
+    sessions.delete(sessionId);
+    console.log(`[Deepgram] session closed  session=${sessionId}`);
   });
 
   // Must call connect() after registering handlers — SDK returns a start-closed socket
@@ -146,12 +141,8 @@ export function sendAudio(sessionId: string, audio: Buffer): void {
 export function closeSession(sessionId: string): string {
   const session = sessions.get(sessionId);
   if (!session) return '';
-  if (session.keepAliveTimer) {
-    clearInterval(session.keepAliveTimer);
-    session.keepAliveTimer = undefined;
-  }
   try {
-    session.socket.send(JSON.stringify({ type: 'CloseStream' }));
+    session.socket.sendCloseStream({});
   } catch {}
   sessions.delete(sessionId);
   return session.transcript.trim();

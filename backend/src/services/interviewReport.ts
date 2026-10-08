@@ -30,8 +30,9 @@ export interface InterviewReport {
   longPauses: number;
   averageResponseLatencySec: number | null;
   scoringMethod: string[];
-  turns: Pick<TurnResult, 'turn' | 'question' | 'difficulty' | 'technicalScore' | 'communicationScore' | 'overallScore'
-    | 'wpm' | 'fillerCount' | 'pauseCount' | 'feedback' | 'pointsCovered' | 'pointsMissed'>[];
+  turns: Pick<TurnResult, 'turn' | 'question' | 'difficulty' | 'category' | 'technicalScore' | 'communicationScore' | 'overallScore'
+    | 'wpm' | 'fillerCount' | 'pauseCount' | 'responseLatencySec' | 'feedback' | 'strengths' | 'weaknesses'
+    | 'pointsCovered' | 'pointsMissed' | 'questionSource'>[];
 }
 
 // Harder questions count more towards the technical average; the self-introduction
@@ -170,10 +171,13 @@ export function buildInterviewReport(input: {
       'Non-answers ("I don\'t know", off-topic) score 0 for technical content and are not credited for delivery.',
     ],
     turns: turns.map((t) => ({
-      turn: t.turn, question: t.question, difficulty: t.difficulty,
+      turn: t.turn, question: t.question, difficulty: t.difficulty, category: t.category,
       technicalScore: t.technicalScore, communicationScore: t.communicationScore, overallScore: t.overallScore,
-      wpm: t.wpm, fillerCount: t.fillerCount, pauseCount: t.pauseCount ?? null, feedback: t.feedback,
+      wpm: t.wpm, fillerCount: t.fillerCount, pauseCount: t.pauseCount ?? null,
+      responseLatencySec: t.responseLatencySec ?? null, feedback: t.feedback,
+      strengths: t.strengths ?? '', weaknesses: t.weaknesses ?? '',
       pointsCovered: t.pointsCovered ?? [], pointsMissed: t.pointsMissed ?? [],
+      questionSource: t.questionSource,
     })),
   };
 }

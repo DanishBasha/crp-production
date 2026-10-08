@@ -50,13 +50,22 @@ export interface InterviewState {
   tab_switches?: number;
   fullscreen_exits?: number;
   last_proctor_event_at?: number;
+  // Resume coverage: items already asked about, and follow-ups since the last new item
+  resume_topics_asked?: string[];
+  follow_ups_in_a_row?: number;
+  current_question_source?: QuestionSource;
+  // Set when an assignment fixes the interview topic; questions then stay on it
+  assigned_topic?: string;
 }
+
+export type QuestionSource = 'introduction' | 'resume' | 'follow_up' | 'fallback';
 
 // What the interviewer knows about the candidate, used to ground questions in their resume.
 export interface InterviewResume {
   name: string;
   skills: string[];
   projects: { title: string; tech_stack: string[]; description: string }[];
+  text?: string; // excerpt of the resume's own text
 }
 
 // One evaluated answer. Scores are 0-100; wpm is null when speaking time was not measured.
@@ -87,6 +96,7 @@ export interface TurnResult {
   feedback: string;
   strengths: string;
   weaknesses: string;
+  questionSource?: QuestionSource;  // what the question was built on
   ts: string;
 }
 
@@ -163,42 +173,54 @@ let memoryStoreWarned = false;
 type NodeRedisClient = ReturnType<typeof createClient>;
 
 let _redis: NodeRedisClient | null = null;
-let _connectPromise: Promise<unknown> | null = null;
+let _connectPromise: Promise<void> | null = null;
+let _redisUnavailable = false; // latched true on first connect failure; prevents retry storms
+
+function warnMemory() {
+  if (!memoryStoreWarned) {
+    memoryStoreWarned = true;
+    console.warn('[SessionContext] Redis unavailable — using in-memory session store (single process only)');
+  }
+}
 
 async function getRedis(): Promise<KvStore> {
-  if (!env.REDIS_URL) {
-    if (!memoryStoreWarned) {
-      memoryStoreWarned = true;
-      console.warn('[SessionContext] REDIS_URL not set — using in-memory session store (single process only)');
-    }
+  if (!env.REDIS_URL || _redisUnavailable) {
+    warnMemory();
     return memoryStore;
   }
 
-  if (_redis && _redis.isOpen) return _redis as unknown as KvStore;
+  if (_redis?.isOpen) return _redis as unknown as KvStore;
 
   if (!_redis) {
     _redis = createClient({
       url: env.REDIS_URL,
       socket: {
-        reconnectStrategy: (retries: number) => Math.min(retries * 100, 3000),
+        connectTimeout: 5000,
+        reconnectStrategy: false, // no auto-retry; we manage the latch
       },
     });
-
     _redis.on('error', (err: Error) => {
       console.error('[SessionContext] Redis error:', err.message);
     });
   }
 
   if (!_connectPromise) {
-    _connectPromise = _redis.connect().catch((err: Error) => {
-      console.error('[SessionContext] Redis connect failed:', err.message);
+    _connectPromise = (_redis.connect() as unknown as Promise<void>).catch((err: Error) => {
+      console.error('[SessionContext] Redis connect failed — falling back to in-memory store:', err.message);
+      _redisUnavailable = true;
       _connectPromise = null;
       _redis = null;
-      throw err;
     });
   }
 
   await _connectPromise;
+
+  if (_redisUnavailable || !_redis?.isOpen) {
+    _redisUnavailable = true;
+    warnMemory();
+    return memoryStore;
+  }
+
   return _redis as unknown as KvStore;
 }
 

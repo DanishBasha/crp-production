@@ -1,99 +1,11 @@
 import React, { useState, useRef } from 'react';
+import { safeHttpUrl } from '../../utils/safeUrl';
 import { useApp } from '../../context/AppContext';
 import { X, UploadCloud, CheckCircle2, FileText, Sparkles, ArrowRight, Clipboard, AlertCircle } from 'lucide-react';
 import { useBackHandler } from '../../hooks/useBackHandler';
 
 interface ResumeUploadModalProps {
   onClose: () => void;
-}
-
-async function extractTextFromPdf(file: File): Promise<string> {
-  // 1. Try PDF.js via CDN dynamic loader
-  try {
-    if (!(window as any).pdfjsLib) {
-      await new Promise<void>((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error('PDF.js CDN load failed'));
-        document.head.appendChild(script);
-      });
-      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    }
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await (window as any).pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    let fullText = '';
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      const strings = content.items.map((item: any) => item.str).join(' ');
-      fullText += strings + '\n';
-    }
-    if (fullText.trim().length > 25) {
-      return fullText.trim();
-    }
-  } catch (e) {
-    console.warn('[ResumeUpload] PDF.js CDN unavailable, attempting binary stream extraction:', e);
-  }
-
-  // 2. Fallback: Parse text directly from raw binary stream
-  try {
-    const arrayBuffer = await file.arrayBuffer();
-    const uint8 = new Uint8Array(arrayBuffer);
-    const binaryStr = new TextDecoder('latin1').decode(uint8);
-
-    const textParts: string[] = [];
-    const tjRegex = /\(([^()]{2,})\)\s*(?:Tj|'|")/g;
-    let match: RegExpExecArray | null;
-    while ((match = tjRegex.exec(binaryStr)) !== null) {
-      const clean = match[1].replace(/\\([()\\])/g, '$1').trim();
-      if (clean.length > 1) {
-        textParts.push(clean);
-      }
-    }
-
-    const arrayTjRegex = /\[(.*?)\]\s*TJ/g;
-    while ((match = arrayTjRegex.exec(binaryStr)) !== null) {
-      const inner = match[1];
-      const innerMatches = inner.match(/\(([^()]+)\)/g);
-      if (innerMatches) {
-        const joined = innerMatches.map(m => m.slice(1, -1).replace(/\\([()\\])/g, '$1')).join('');
-        if (joined.trim().length > 1) {
-          textParts.push(joined.trim());
-        }
-      }
-    }
-
-    return textParts.join(' ');
-  } catch {
-    return '';
-  }
-}
-
-async function extractTextFromDocx(file: File): Promise<string> {
-  try {
-    const buffer = await file.arrayBuffer();
-    const text = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(buffer));
-    const wtRegex = /<w:t(?:\s+[^>]*)?>([^<]+)<\/w:t>/g;
-    const parts: string[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = wtRegex.exec(text)) !== null) {
-      parts.push(m[1]);
-    }
-    if (parts.length > 0) return parts.join(' ');
-  } catch {}
-  return '';
-}
-
-async function extractTextFromFile(file: File): Promise<string> {
-  const ext = file.name.split('.').pop()?.toLowerCase();
-  if (ext === 'pdf') {
-    return extractTextFromPdf(file);
-  }
-  if (ext === 'docx') {
-    return extractTextFromDocx(file);
-  }
-  return file.text();
 }
 
 export const ResumeUploadModal: React.FC<ResumeUploadModalProps> = ({ onClose }) => {
@@ -111,23 +23,9 @@ export const ResumeUploadModal: React.FC<ResumeUploadModalProps> = ({ onClose })
     setErrorMessage(null);
     setIsProcessing(true);
     try {
-      let extractedText = '';
-      try {
-        extractedText = await extractTextFromFile(file);
-      } catch (extractErr) {
-        console.warn('[ResumeUpload] Text extraction warning, using intelligent profile fallback:', extractErr);
-      }
-
-      if (!extractedText || extractedText.trim().length < 20) {
-        const cleanName = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
-        extractedText = `Profile: ${cleanName}\nCandidate: ${student.name || 'Candidate'}\nRole: Software Engineer / Tech Professional\nSkills: Problem Solving, Data Structures, Algorithms, Full Stack Development, System Architecture, Database Management\nProjects: Core Software Application, Performance Optimization, Cloud Infrastructure\nFile: ${file.name}`;
-      }
-
-      await uploadResumeData({
-        resumeText: extractedText.trim(),
-        fileName: file.name,
-        file: file
-      } as any);
+      const formData = new FormData();
+      formData.append('resume', file);
+      await uploadResumeData(formData);
       setActiveTab('extracted');
     } catch (err: any) {
       console.error('Resume upload error:', err);
@@ -281,7 +179,7 @@ export const ResumeUploadModal: React.FC<ResumeUploadModalProps> = ({ onClose })
                       Click to choose your resume file or drag & drop here
                     </p>
                     <p className="text-[11px] text-neutral-400 mt-1">
-                      Supports PDF, TXT, DOCX (Max 10MB)
+                      PDF, DOCX or TXT, up to 5 MB
                     </p>
 
                     {isProcessing && (
@@ -420,7 +318,7 @@ export const ResumeUploadModal: React.FC<ResumeUploadModalProps> = ({ onClose })
                 <p className="text-xs font-semibold text-neutral-700 uppercase tracking-wider mb-2 font-mono">
                   Extracted Projects ({student.resume?.projects.length || 0})
                 </p>
-                <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                <div className="space-y-2.5 max-h-40 overflow-y-auto pr-1">
                   {student.resume?.projects.map((proj, idx) => (
                     <div key={idx} className="bg-neutral-50 border border-neutral-200/80 rounded-xl p-3 text-xs space-y-1">
                       <div className="flex items-center justify-between">
@@ -441,6 +339,87 @@ export const ResumeUploadModal: React.FC<ResumeUploadModalProps> = ({ onClose })
                   )}
                 </div>
               </div>
+
+              {/* Experience */}
+              {(student.resume?.experience?.length ?? 0) > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-neutral-700 uppercase tracking-wider mb-2 font-mono">
+                    Work Experience ({(student.resume?.experience ?? []).length})
+                  </p>
+                  <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                    {(student.resume?.experience ?? []).map((exp: any, idx: number) => (
+                      <div key={idx} className="bg-neutral-50 border border-neutral-200/80 rounded-xl p-3 text-xs space-y-0.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <span className="font-semibold text-neutral-900">{exp.title}</span>
+                            {exp.company && <span className="text-neutral-500 ml-1">@ {exp.company}</span>}
+                          </div>
+                          {exp.duration && <span className="text-[10px] font-mono text-neutral-400 shrink-0">{exp.duration}</span>}
+                        </div>
+                        {exp.description && <p className="text-neutral-600 text-[11px] leading-relaxed">{exp.description}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Education */}
+              {(student.resume?.education?.length ?? 0) > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-neutral-700 uppercase tracking-wider mb-2 font-mono">Education</p>
+                  <div className="space-y-2">
+                    {(student.resume?.education ?? []).map((edu: any, idx: number) => (
+                      <div key={idx} className="bg-neutral-50 border border-neutral-200/80 rounded-xl p-3 text-xs">
+                        <span className="font-semibold text-neutral-900">{edu.degree}</span>
+                        {edu.institution && <span className="text-neutral-500 ml-1">— {edu.institution}</span>}
+                        {edu.year && <span className="text-[10px] font-mono text-neutral-400 ml-2">{edu.year}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Certifications */}
+              {(student.resume?.certifications?.length ?? 0) > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-neutral-700 uppercase tracking-wider mb-2 font-mono">Certifications</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(student.resume?.certifications ?? []).map((cert: string, idx: number) => (
+                      <span key={idx} className="px-2 py-1 bg-emerald-50 border border-emerald-200 rounded-lg text-[11px] font-medium text-emerald-800">
+                        {cert}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Links */}
+              {[student.resume?.links?.github, student.resume?.links?.linkedin, student.resume?.links?.portfolio].some((u) => safeHttpUrl(u)) && (
+                <div>
+                  <p className="text-xs font-semibold text-neutral-700 uppercase tracking-wider mb-2 font-mono">Links</p>
+                  <div className="flex flex-wrap gap-2">
+                    {safeHttpUrl(student.resume?.links?.github) && (
+                      <a href={safeHttpUrl(student.resume?.links?.github) ?? undefined} target="_blank" rel="noopener noreferrer"
+                        className="px-2.5 py-1 bg-neutral-100 border border-neutral-200 rounded-lg text-[11px] font-mono text-neutral-700 hover:bg-neutral-200 transition-colors">
+                        GitHub ↗
+                      </a>
+                    )}
+                    {safeHttpUrl(student.resume?.links?.linkedin) && (
+                      <a href={safeHttpUrl(student.resume?.links?.linkedin) ?? undefined} target="_blank" rel="noopener noreferrer"
+                        className="px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-lg text-[11px] font-mono text-blue-700 hover:bg-blue-100 transition-colors">
+                        LinkedIn ↗
+                      </a>
+                    )}
+                    {safeHttpUrl(student.resume?.links?.portfolio) && (
+                      <a href={safeHttpUrl(student.resume?.links?.portfolio) ?? undefined} target="_blank" rel="noopener noreferrer"
+                        className="px-2.5 py-1 bg-purple-50 border border-purple-200 rounded-lg text-[11px] font-mono text-purple-700 hover:bg-purple-100 transition-colors">
+                        Portfolio ↗
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
         </div>
