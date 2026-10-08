@@ -1372,32 +1372,57 @@ class ApiClient {
     },
 
 
-    registerCandidate: async (candidateData: { name: string; email: string; password?: string }) => {
+    registerCandidate: async (candidateData: { name: string; email: string; password?: string; collegeId?: string; department?: string; batchYear?: number }) => {
       const password = candidateData.password || 'welcome@2026';
-      await this.studentBatch.enrollSingle('col-1', {
-        name: candidateData.name || 'Independent Candidate',
-        email: candidateData.email.toLowerCase().trim(),
-        password,
-        rollNumber: `IND-${Math.floor(1000 + Math.random() * 9000)}`,
-        department: 'Independent Study',
-        batchYear: 2026
+      const res = await this._fetch<{ data: { token: string; user: any; studentId?: string } }>('/auth/register-candidate', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: candidateData.name || 'Candidate',
+          email: candidateData.email.toLowerCase().trim(),
+          password,
+          collegeId: candidateData.collegeId,
+          department: candidateData.department || 'Computer Science & Engineering',
+          batchYear: candidateData.batchYear || 2026,
+        }),
       });
-      return this.auth.login(candidateData.email, password);
+
+      const { token, user, studentId } = res.data;
+      this.setToken(token);
+      localStorage.setItem('auth_user', JSON.stringify({ ...user, studentId }));
+
+      return {
+        user: { ...user, studentId: studentId || user.studentId },
+        token,
+        studentId: studentId || user.studentId
+      };
     },
 
     register: async (userData: any) => {
       const password = userData.password || 'welcome@2026';
-      await this.studentBatch.enrollSingle(userData.collegeId || 'col-1', {
-        name: userData.name || 'New Candidate',
-        email: userData.email.toLowerCase().trim(),
-        password,
-        rollNumber: userData.rollNumber || `22CS${Math.floor(1000 + Math.random() * 9000)}`,
-        department: userData.department || 'Computer Science & Engineering',
-        batchYear: userData.batchYear || 2026,
-        track: userData.track || 'General Track',
-        programName: userData.programName
+      const res = await this._fetch<{ data: { token: string; user: any; studentId?: string } }>('/auth/register-candidate', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: userData.name || 'New Candidate',
+          email: userData.email.toLowerCase().trim(),
+          password,
+          collegeId: userData.collegeId,
+          rollNumber: userData.rollNumber,
+          department: userData.department || 'Computer Science & Engineering',
+          batchYear: userData.batchYear || 2026,
+          track: userData.track || 'General Track',
+          programName: userData.programName
+        }),
       });
-      return this.auth.login(userData.email, password);
+
+      const { token, user, studentId } = res.data;
+      this.setToken(token);
+      localStorage.setItem('auth_user', JSON.stringify({ ...user, studentId }));
+
+      return {
+        user: { ...user, studentId: studentId || user.studentId },
+        token,
+        studentId: studentId || user.studentId
+      };
     },
 
     registerExternal: async (userData: { name: string; email: string; password?: string; department?: string; batchYear?: number }) => {

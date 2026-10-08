@@ -34,13 +34,14 @@ async function fetchStudentProfile(identifier: string) {
       u.name,
       u.email,
       s.roll_number AS "rollNumber",
-      u.institution_id AS "collegeId",
+      COALESCE(u.institution_id, p.institution_id, pb.institution_id) AS "collegeId",
+      COALESCE(inst.name, 'Main Institution') AS "collegeName",
       COALESCE(s.department, 'General Department') AS department,
       COALESCE(s.batch_year, 2026) AS "batchYear",
       COALESCE(s.class_name, '') AS "className",
       COALESCE(s.track, 'General Track') AS track,
-      s.program_id AS "programId",
-      s.program_name AS "programName",
+      COALESCE(s.program_id, b.program_id) AS "programId",
+      COALESCE(s.program_name, p.name, pb.name, 'General Engineering') AS "programName",
       s.sub_program_name AS "subProgramName",
       COALESCE(s.mentor_name, 'Faculty Mentor') AS "mentorName",
       COALESCE(s.mentor_email, 'mentor@college.edu') AS "mentorEmail",
@@ -55,6 +56,10 @@ async function fetchStudentProfile(identifier: string) {
       s.created_at AS "createdAt"
     FROM org.students s
     JOIN identity.users u ON u.id = s.user_id
+    LEFT JOIN org.programs p ON p.id = s.program_id
+    LEFT JOIN org.batches b ON b.id = s.batch_id
+    LEFT JOIN org.programs pb ON pb.id = b.program_id
+    LEFT JOIN org.institutions inst ON inst.id = COALESCE(u.institution_id, p.institution_id, pb.institution_id)
   `;
   if (isUuid) {
     query += ` WHERE s.id = $1 OR s.user_id = $1`;
@@ -66,14 +71,47 @@ async function fetchStudentProfile(identifier: string) {
 
   // Auto-create student record if user exists
   if (isUuid) {
-    const { rows: uRows } = await db.query(`SELECT id, name, email FROM identity.users WHERE id = $1`, [identifier]);
+    const { rows: uRows } = await db.query(
+      `SELECT id, name, email, institution_id FROM identity.users WHERE id = $1`,
+      [identifier]
+    );
     if (uRows.length > 0) {
+      const u = uRows[0];
+      let instId = u.institution_id;
+      if (!instId) {
+        const { rows: insts } = await db.query(`SELECT id FROM org.institutions ORDER BY created_at DESC LIMIT 1`);
+        instId = insts[0]?.id;
+      }
+      let programId: string | null = null;
+      let batchId: string | null = null;
+      if (instId) {
+        const { rows: progs } = await db.query(`SELECT id, name FROM org.programs WHERE institution_id = $1 LIMIT 1`, [instId]);
+        if (progs.length > 0) {
+          programId = progs[0].id;
+        } else {
+          const { rows: newProg } = await db.query(
+            `INSERT INTO org.programs (institution_id, name, code) VALUES ($1, 'General Engineering', 'GEN') RETURNING id`,
+            [instId]
+          );
+          programId = newProg[0].id;
+        }
+        const { rows: batches } = await db.query(`SELECT id FROM org.batches WHERE program_id = $1 LIMIT 1`, [programId]);
+        if (batches.length > 0) {
+          batchId = batches[0].id;
+        } else {
+          const { rows: newBatch } = await db.query(
+            `INSERT INTO org.batches (program_id, name, year, track) VALUES ($1, 'Batch 2026', 2026, 'General Track') RETURNING id`,
+            [programId]
+          );
+          batchId = newBatch[0].id;
+        }
+      }
       const roll = `STU${Date.now().toString(36).toUpperCase().slice(-6)}`;
       const { rows: newStu } = await db.query(
-        `INSERT INTO org.students (user_id, roll_number, department, batch_year, track)
-         VALUES ($1, $2, 'General Department', 2026, 'General Track')
+        `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track)
+         VALUES ($1, $2, $3, $4, 'General Department', 2026, 'General Track')
          RETURNING id`,
-        [uRows[0].id, roll]
+        [u.id, programId, batchId, roll]
       );
       if (newStu.length > 0) {
         return fetchStudentProfile(newStu[0].id);

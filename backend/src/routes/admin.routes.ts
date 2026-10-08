@@ -121,7 +121,17 @@ const requireAdminOrStaff = requireRole(
 // ── GET /api/admin/assignments ───────────────────────────────────────────────
 adminRouter.get(
   '/assignments',
-  requireAdminOrStaff,
+  requireRole(
+    'SUPER_ADMIN',
+    'PLATFORM_OWNER',
+    'PROGRAM_ADMIN',
+    'DEPARTMENT_ADMIN',
+    'FACULTY_MENTOR',
+    'COUNSELLOR',
+    'PLACEMENT_COORDINATOR',
+    'TRAINER',
+    'STUDENT'
+  ),
   async (req: Request, res: Response): Promise<void> => {
     try {
       const collegeId = req.query.collegeId as string;

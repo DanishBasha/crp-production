@@ -16,6 +16,8 @@ ALTER TABLE org.department_classes ADD COLUMN IF NOT EXISTS student_ids JSONB DE
 ALTER TABLE org.department_staff ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '[]'::jsonb;
 
 -- 4. Enhance org.students for full profile & assessment persistence
+ALTER TABLE org.students ALTER COLUMN batch_id DROP NOT NULL;
+ALTER TABLE org.students ALTER COLUMN program_id DROP NOT NULL;
 ALTER TABLE org.students ADD COLUMN IF NOT EXISTS department VARCHAR(255);
 ALTER TABLE org.students ADD COLUMN IF NOT EXISTS batch_year INTEGER;
 ALTER TABLE org.students ADD COLUMN IF NOT EXISTS track VARCHAR(255);

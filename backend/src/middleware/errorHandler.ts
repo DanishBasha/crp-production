@@ -21,6 +21,7 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     });
     return;
   }
-  console.error(err);
-  res.status(500).json({ status: 'error', message: 'Internal server error', code: 'INTERNAL_ERROR' });
+  console.error('[errorHandler]', err);
+  const msg = (err as Error)?.message || 'Internal server error';
+  res.status(500).json({ status: 'error', message: msg, code: 'INTERNAL_ERROR' });
 };

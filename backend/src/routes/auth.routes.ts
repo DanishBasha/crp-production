@@ -100,6 +100,170 @@ authRouter.post('/register', async (req: Request, res: Response): Promise<void> 
   }
 });
 
+// ── POST /api/auth/register-candidate ──────────────────────────────────────────
+
+const registerCandidateSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters').max(255),
+  email: z.string().email('Valid email is required').transform(s => s.toLowerCase()),
+  password: z.string().optional().transform(p => (p && p.trim().length >= 6 ? p.trim() : 'welcome@2026')),
+  collegeId: z.string().optional(),
+  department: z.string().optional().default('Computer Science & Engineering'),
+  batchYear: z.number().int().optional().default(2026),
+  track: z.string().optional().default('General Track'),
+  programName: z.string().optional().default('General Engineering'),
+  rollNumber: z.string().optional(),
+});
+
+authRouter.post('/register-candidate', async (req: Request, res: Response): Promise<void> => {
+  const parsed = registerCandidateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const detail = parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ');
+    sendError(res, new AppError(422, `Validation failed: ${detail}`, 'VALIDATION_ERROR'));
+    return;
+  }
+  const { name, email, password, collegeId, department, batchYear, track, programName, rollNumber } = parsed.data;
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 1. Resolve institution
+    let instId: string;
+    let instName = 'Main Institution';
+    if (collegeId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(collegeId)) {
+      const { rows } = await client.query(`SELECT id, name FROM org.institutions WHERE id = $1`, [collegeId]);
+      if (rows.length > 0) {
+        instId = rows[0].id;
+        instName = rows[0].name;
+      } else {
+        const { rows: latest } = await client.query(`SELECT id, name FROM org.institutions ORDER BY created_at DESC LIMIT 1`);
+        instId = latest[0]?.id;
+        instName = latest[0]?.name || instName;
+      }
+    } else {
+      const { rows: latest } = await client.query(`SELECT id, name FROM org.institutions ORDER BY created_at DESC LIMIT 1`);
+      if (latest.length > 0) {
+        instId = latest[0].id;
+        instName = latest[0].name;
+      } else {
+        const { rows: created } = await client.query(
+          `INSERT INTO org.institutions (name, code, type, is_active) VALUES ('Main Institution', 'INST01', 'COLLEGE', true) RETURNING id, name`
+        );
+        instId = created[0].id;
+        instName = created[0].name;
+      }
+    }
+
+    // 2. Resolve or create program
+    let progId: string;
+    const { rows: progs } = await client.query(
+      `SELECT id, name FROM org.programs WHERE institution_id = $1 LIMIT 1`,
+      [instId]
+    );
+    if (progs.length > 0) {
+      progId = progs[0].id;
+    } else {
+      const { rows: newProg } = await client.query(
+        `INSERT INTO org.programs (institution_id, name, code) VALUES ($1, $2, 'GEN') RETURNING id`,
+        [instId, programName || 'General Engineering']
+      );
+      progId = newProg[0].id;
+    }
+
+    // 3. Resolve or create batch
+    let batchId: string;
+    const { rows: batches } = await client.query(
+      `SELECT id FROM org.batches WHERE program_id = $1 AND year = $2 LIMIT 1`,
+      [progId, batchYear]
+    );
+    if (batches.length > 0) {
+      batchId = batches[0].id;
+    } else {
+      const { rows: newBatch } = await client.query(
+        `INSERT INTO org.batches (program_id, name, year, track) VALUES ($1, $2, $3, $4) RETURNING id`,
+        [progId, `Batch ${batchYear}`, batchYear, track || 'General Track']
+      );
+      batchId = newBatch[0].id;
+    }
+
+    // 4. Hash password
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // 5. Upsert into identity.users
+    const { rows: userRows } = await client.query<{ id: string; name: string; email: string; role: UserRole; token_version: number }>(
+      `INSERT INTO identity.users (name, email, password_hash, role, token_version, status, institution_id)
+       VALUES ($1, $2, $3, 'STUDENT', 0, 'ACTIVE', $4)
+       ON CONFLICT (email) DO UPDATE SET
+         name = EXCLUDED.name,
+         password_hash = EXCLUDED.password_hash,
+         status = 'ACTIVE',
+         institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
+       RETURNING id, name, email, role, token_version`,
+      [name, email, passwordHash, instId]
+    );
+    const user = userRows[0];
+
+    // 6. Ensure student record exists in org.students
+    const actualRoll = rollNumber || `22CS${Math.floor(1000 + Math.random() * 9000)}`;
+    const { rows: studentRows } = await client.query<{ id: string }>(
+      `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track, coins, overall_readiness)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 5, 75)
+       ON CONFLICT (user_id) DO UPDATE SET
+         program_id = COALESCE(org.students.program_id, EXCLUDED.program_id),
+         batch_id = COALESCE(org.students.batch_id, EXCLUDED.batch_id),
+         department = COALESCE(org.students.department, EXCLUDED.department),
+         batch_year = COALESCE(org.students.batch_year, EXCLUDED.batch_year),
+         track = COALESCE(org.students.track, EXCLUDED.track)
+       RETURNING id`,
+      [user.id, progId, batchId, actualRoll, department, batchYear, track]
+    );
+    const studentId = studentRows[0].id;
+
+    // 7. Role assignment
+    await client.query(
+      `INSERT INTO identity.role_assignments (user_id, role_id, institution_id, program_id, batch_id, scope_type, is_active)
+       SELECT $1, id, $2, $3, $4, 'BATCH', true FROM identity.roles WHERE name = 'STUDENT'
+       ON CONFLICT DO NOTHING`,
+      [user.id, instId, progId, batchId]
+    ).catch(() => {});
+
+    await client.query('COMMIT');
+
+    const authUser: AuthUser = {
+      id: user.id,
+      email: user.email,
+      role: 'STUDENT',
+      name: user.name,
+      tokenVersion: user.token_version || 0,
+    };
+    const token = signToken(authUser);
+
+    sendSuccess(res, {
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: 'STUDENT',
+        studentId,
+        rollNumber: actualRoll,
+        collegeId: instId,
+        collegeName: instName,
+        department,
+        batchYear,
+        track,
+        programName,
+      },
+      studentId
+    }, 201);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    sendError(res, err);
+  } finally {
+    client.release();
+  }
+});
+
 // ── POST /api/auth/register-institution ────────────────────────────────────────
 
 const registerInstitutionSchema = z.object({

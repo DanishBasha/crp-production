@@ -14,6 +14,7 @@ export function sendError(res: Response, error: unknown): void {
     });
     return;
   }
-  console.error(error);
-  res.status(500).json({ status: 'error', message: 'Internal server error', code: 'INTERNAL_ERROR' });
+  console.error('[sendError]', error);
+  const msg = (error as any)?.message || 'Internal server error';
+  res.status(500).json({ status: 'error', message: msg, code: 'INTERNAL_ERROR' });
 }

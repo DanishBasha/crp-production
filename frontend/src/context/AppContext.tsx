@@ -900,6 +900,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     const fetchAssignments = async () => {
+      if (!currentUser || !['SUPER_ADMIN', 'PLATFORM_OWNER', 'PROGRAM_ADMIN', 'DEPARTMENT_ADMIN', 'FACULTY_MENTOR'].includes(currentUser.role)) {
+        return;
+      }
       try {
         const list = await api.admin.getAssignments(currentUser?.collegeId);
         setAssignments(list || []);
@@ -908,10 +911,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
     fetchAssignments();
-  }, [currentUser?.collegeId]);
+  }, [currentUser?.collegeId, currentUser?.role]);
 
   useEffect(() => {
     const fetchTenures = async () => {
+      if (!currentUser || !['SUPER_ADMIN', 'PLATFORM_OWNER', 'PROGRAM_ADMIN', 'DEPARTMENT_ADMIN'].includes(currentUser.role)) {
+        return;
+      }
       try {
         const list = await api.admin.getTrainerTenures(currentUser?.collegeId);
         setTrainerTenures(list || []);
@@ -920,7 +926,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
     fetchTenures();
-  }, [currentUser?.collegeId]);
+  }, [currentUser?.collegeId, currentUser?.role]);
 
   // Load real student profile from database if authenticated as STUDENT
   useEffect(() => {
@@ -1555,8 +1561,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const uploadResumeData = async (payload: FormData | { resumeText: string; fileName?: string } | ParsedResume): Promise<ParsedResume> => {
-    const parsed = await api.student.uploadResume(student.id || 'stu-21cs1084', payload);
+    const targetId = student.id || currentUser?.studentId || currentUser?.id || 'me';
+    const parsed = await api.student.uploadResume(targetId, payload);
     setStudent(prev => ({ ...prev, resume: parsed }));
+    try {
+      const refreshed = await api.student.getProfile(targetId);
+      if (refreshed && refreshed.name) setStudent(refreshed);
+    } catch (e) {
+      console.warn('Failed to refresh student profile after resume upload:', e);
+    }
     return parsed;
   };
 
