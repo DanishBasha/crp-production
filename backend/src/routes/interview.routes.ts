@@ -472,8 +472,8 @@ interviewRouter.post('/submit-turn', async (req: AuthRequest, res: Response): Pr
       weaknesses: evalRes.weaknesses || 'Elaborate further on concurrency constraints and system resilience.'
     };
 
-    // User requirement: AI must ask at least 13 questions (turns 0 through 12) or continue until the 25-minute timer ends!
-    const isCompleted = (turnIndex >= 12) || Boolean(timeExpired) || Boolean(forceConclude);
+    // Continuous questions until the 15-minute timer ends or candidate concludes
+    const isCompleted = (turnIndex >= 49) || Boolean(timeExpired) || Boolean(forceConclude);
     let nextQuestion: any = null;
     let finalReport: any = null;
 

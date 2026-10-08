@@ -128,12 +128,26 @@ const cleanList = (values: unknown[] | undefined, max: number) =>
 async function loadResume(studentId: string, name: string, provided?: ResumeInput): Promise<InterviewResume> {
   let source = provided;
   if (!source?.skills?.length && !source?.projects?.length) {
-    // Fall back to the parsed data of the student's current uploaded resume, if any
-    const { rows } = await db.query<{ parsed_data: ResumeInput | null }>(
-      'SELECT parsed_data FROM org.resumes WHERE student_id = $1 AND is_current = true',
-      [studentId]
-    );
-    source = rows[0]?.parsed_data ?? undefined;
+    // 1. First check org.students.resume_data
+    try {
+      const { rows: stuRows } = await db.query<{ resume_data: ResumeInput | null }>(
+        'SELECT resume_data FROM org.students WHERE id = $1 OR user_id = $1',
+        [studentId]
+      );
+      if (stuRows[0]?.resume_data?.skills?.length || stuRows[0]?.resume_data?.projects?.length) {
+        source = stuRows[0].resume_data;
+      }
+    } catch {}
+  }
+  if (!source?.skills?.length && !source?.projects?.length) {
+    // 2. Fall back to the parsed data of the student's current uploaded resume, if any
+    try {
+      const { rows } = await db.query<{ parsed_data: ResumeInput | null }>(
+        'SELECT parsed_data FROM org.resumes WHERE student_id = $1 AND is_current = true ORDER BY created_at DESC LIMIT 1',
+        [studentId]
+      );
+      source = rows[0]?.parsed_data ?? undefined;
+    } catch {}
   }
   return {
     name,
@@ -232,7 +246,7 @@ export async function startLiveInterview(userId: string, resumeInput?: ResumeInp
     await terminateLiveInterview(sessionId, attemptId).catch(() => {});
     throw err;
   }
-  const maxTurns = Math.max(13, env.MAX_QUESTIONS_PER_SESSION || 13);
+  const maxTurns = Math.max(50, env.MAX_QUESTIONS_PER_SESSION || 50);
   const resume = await loadResume(student.id, student.name, resumeInput)
     .catch(() => ({ name: student.name, skills: [], projects: [] }) as InterviewResume);
 

@@ -1938,7 +1938,7 @@ class ApiClient {
       };
 
       sess.questions[turnIdx] = turnEvaluation;
-      const isCompleted = (turnIdx >= 12) || Boolean(options?.timeExpired) || (durationSeconds >= 1500);
+      const isCompleted = (turnIdx >= 49) || Boolean(options?.timeExpired) || (durationSeconds >= 900);
       let nextQuestion: QuestionTurn | undefined = undefined;
       let finalReport: DiagnosticReport | undefined = undefined;
 
@@ -2290,9 +2290,21 @@ class ApiClient {
       return { success: true, message: 'User removed successfully' };
     },
 
-    getStudentFullHistory: async (studentId: string) => {
-      const student = await this.student.getProfile(studentId);
-      const sessions = (student.recentReports || []).map((r: any, i: number) => ({
+    getStudentFullHistory: async (studentId: string, directReport?: any) => {
+      let student: any = null;
+      try {
+        student = await this.student.getProfile(studentId);
+      } catch {
+        student = { id: studentId, name: 'Candidate Student', recentReports: [] };
+      }
+      if (!student) {
+        student = { id: studentId, name: 'Candidate Student', recentReports: [] };
+      }
+      const rawReports = Array.isArray(student.recentReports) ? [...student.recentReports] : [];
+      if (directReport && !rawReports.some((r: any) => r?.id === directReport?.id)) {
+        rawReports.unshift(directReport);
+      }
+      const sessions = rawReports.map((r: any, i: number) => ({
         id: r.id || `ses_${i + 1}`,
         sessionType: r.sessionType || 'MOCK_INTERVIEW',
         overallScore: r.overallScore,
@@ -2339,8 +2351,21 @@ class ApiClient {
       };
     },
 
-    getStudents: async (params: { cohort?: string; search?: string } = {}) => {
-      const q = params.search ? `?search=${encodeURIComponent(params.search)}` : '';
+    getStudents: async (params: { cohort?: string; search?: string; collegeId?: string } = {}) => {
+      const qParams = new URLSearchParams();
+      if (params.search) qParams.set('search', params.search);
+      let collegeId = params.collegeId;
+      if (!collegeId && typeof localStorage !== 'undefined') {
+        try {
+          const saved = localStorage.getItem('auth_user');
+          if (saved) {
+            const u = JSON.parse(saved);
+            if (u.collegeId || u.institutionId) collegeId = u.collegeId || u.institutionId;
+          }
+        } catch {}
+      }
+      if (collegeId) qParams.set('collegeId', collegeId);
+      const q = qParams.toString() ? `?${qParams.toString()}` : '';
       const res = await this._fetch<{ data: any[] }>(`/admin/students${q}`);
       return res.data || [];
     },

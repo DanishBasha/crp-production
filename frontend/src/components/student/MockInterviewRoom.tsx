@@ -87,7 +87,7 @@ export const MockInterviewRoom: React.FC = () => {
   const [isFullscreen, setIsFullscreen] = useState(() => {
     return typeof document !== 'undefined' ? Boolean(document.fullscreenElement) : false;
   });
-  const [sessionTimeLeft, setSessionTimeLeft] = useState<number>(1500); // 25 minutes limit
+  const [sessionTimeLeft, setSessionTimeLeft] = useState<number>(900); // 15 minutes limit
   const [showWhisperModal, setShowWhisperModal] = useState(false);
   const [hasWhisperKey, setHasWhisperKey] = useState(() => hasWhisperApiKey());
   const [selectedVoice, setSelectedVoice] = useState<OpenAITTSVoice>(() => getOpenAITTSVoice());
@@ -951,9 +951,14 @@ export const MockInterviewRoom: React.FC = () => {
           if (naturalVoice) utterance.voice = naturalVoice;
 
           let hasEnded = false;
+          let keepAliveInterval: any = null;
           const handleEnd = () => {
             if (hasEnded) return;
             hasEnded = true;
+            if (keepAliveInterval) {
+              clearInterval(keepAliveInterval);
+              keepAliveInterval = null;
+            }
             onDone();
           };
 
@@ -973,7 +978,25 @@ export const MockInterviewRoom: React.FC = () => {
             handleEnd();
           };
 
-          const safetyTimeout = Math.min(14000, Math.max(5000, questionText.length * 80));
+          // Chrome Web Speech API bug: speech synthesis pauses automatically after ~14-15 seconds.
+          // Toggling pause/resume keeps speech alive for long questions without premature cutoff.
+          keepAliveInterval = setInterval(() => {
+            if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+              if (!window.speechSynthesis.speaking) {
+                if (keepAliveInterval) {
+                  clearInterval(keepAliveInterval);
+                  keepAliveInterval = null;
+                }
+                return;
+              }
+              window.speechSynthesis.pause();
+              window.speechSynthesis.resume();
+            }
+          }, 8000);
+
+          // Generous safety timeout: ~120 words/min = ~12 chars/sec.
+          // Allow 250ms per character plus 40s buffer so long questions are NEVER cut off prematurely.
+          const safetyTimeout = Math.max(45000, questionText.length * 250 + 40000);
           setTimeout(() => {
             if (isSpeakingRef.current && !hasEnded) {
               handleEnd();
@@ -1325,7 +1348,7 @@ export const MockInterviewRoom: React.FC = () => {
             <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
               <div className="flex items-center space-x-1.5 bg-neutral-900 text-white px-3.5 py-1.5 rounded-xl text-xs font-mono font-medium shadow-2xs">
                 <Clock className="w-3.5 h-3.5 text-neutral-300" />
-                <span>Timer: {formatSessionTime(sessionTimeLeft)} / 25:00</span>
+                <span>Timer: {formatSessionTime(sessionTimeLeft)} / 15:00</span>
               </div>
 
               <button
@@ -1367,7 +1390,7 @@ export const MockInterviewRoom: React.FC = () => {
         <div className="flex items-center justify-center">
           <div className="flex items-center space-x-2 bg-neutral-900 text-white px-4 py-1.5 rounded-full text-xs font-mono font-medium shadow-2xs">
             <Clock className="w-3.5 h-3.5 text-neutral-300" />
-            <span>Timer: {formatSessionTime(sessionTimeLeft)} / 25:00</span>
+            <span>Timer: {formatSessionTime(sessionTimeLeft)} / 15:00</span>
           </div>
         </div>
       )}

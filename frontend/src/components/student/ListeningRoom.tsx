@@ -636,7 +636,7 @@ export const ListeningRoom: React.FC = () => {
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [isCompletedAwaitingEvaluation, setIsCompletedAwaitingEvaluation] = useState(false);
   const [wavePhase, setWavePhase] = useState(0);
-  const [sessionTimeLeft, setSessionTimeLeft] = useState<number>(1500); // 25 minutes limit
+  const [sessionTimeLeft, setSessionTimeLeft] = useState<number>(900); // 15 minutes limit
 
   const recognitionRef = useRef<any>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -1152,7 +1152,7 @@ export const ListeningRoom: React.FC = () => {
         <div className="flex items-center space-x-2">
           <div className="flex items-center space-x-1.5 bg-neutral-900 text-white px-3 py-1 rounded-full text-xs font-mono font-medium shadow-2xs">
             <Clock className="w-3.5 h-3.5 text-neutral-300" />
-            <span>Timer: {formatSessionTime(sessionTimeLeft)} / 25:00</span>
+            <span>Timer: {formatSessionTime(sessionTimeLeft)} / 15:00</span>
           </div>
 
           <div className="flex items-center space-x-1.5 bg-neutral-50 border border-neutral-200 rounded-xl px-2.5 py-1">

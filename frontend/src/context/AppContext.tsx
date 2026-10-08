@@ -173,7 +173,7 @@ interface AppContextType {
   createAssignment: (assignment: Partial<InterviewAssignment>) => Promise<InterviewAssignment>;
   activeAssignment: InterviewAssignment | null;
   startAssignedSession: (assignment: InterviewAssignment) => Promise<void>;
-  completeAssignmentSubmission: (assignmentId: string, score: number, sessionType: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION' | 'BOTH', status?: 'COMPLETED' | 'FLAGGED' | 'DISQUALIFIED', reason?: string) => Promise<void>;
+  completeAssignmentSubmission: (assignmentId: string, score: number, sessionType: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION' | 'BOTH', status?: 'COMPLETED' | 'FLAGGED' | 'DISQUALIFIED', reason?: string, report?: any) => Promise<void>;
   isAssignmentDisqualified: (assignmentId: string) => boolean;
   disqualifyAssignment: (assignmentId: string, reason?: string) => Promise<void>;
   terminateDisqualifiedSession: (assignmentId?: string) => Promise<void>;
@@ -958,6 +958,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
     fetchAssignments();
+    const pollInterval = setInterval(fetchAssignments, 12000);
+    return () => clearInterval(pollInterval);
   }, [currentUser?.collegeId, currentUser?.role, student?.id]);
 
   useEffect(() => {
@@ -1032,20 +1034,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     score: number, 
     sessionType: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION' | 'BOTH',
     status: 'COMPLETED' | 'FLAGGED' | 'DISQUALIFIED' = 'COMPLETED',
-    reason?: string
+    reason?: string,
+    report?: any
   ) => {
     const isDisq = status === 'DISQUALIFIED';
+    const isMock = !student.id || student.id.startsWith('stu-') || student.id.startsWith('stu_');
+    const realStudentId = (!isMock ? student.id : null) || currentUser?.studentId || currentUser?.id || 'candidate';
     const submission: AssignmentSubmission = {
-      studentId: student.id || 'stu-candidate',
-      studentName: student.name || 'Candidate Student',
-      studentRollNumber: student.rollNumber || '',
+      studentId: realStudentId,
+      studentName: student.name || currentUser?.name || 'Candidate Student',
+      studentRollNumber: student.rollNumber || (currentUser as any)?.rollNumber || '',
+      studentEmail: student.email || currentUser?.email || '',
+      department: student.department || (currentUser as any)?.department || 'Computer Science & Engineering',
       score: isDisq ? 0 : score,
+      technicalScore: report?.technicalScore ?? (isDisq ? 0 : score),
+      communicationScore: report?.communicationScore ?? (isDisq ? 0 : score),
       sessionType,
       submittedAt: new Date().toISOString(),
       status,
       isDisqualified: isDisq,
       disqualificationReason: reason,
-      recommendation: isDisq ? 'DISQUALIFIED' : (score >= 80 ? 'PLACEMENT_READY' : 'ON_TRACK')
+      recommendation: isDisq ? 'DISQUALIFIED' : (score >= 80 ? 'PLACEMENT_READY' : 'ON_TRACK'),
+      report: report || null
     };
     try {
       const res = await api.admin.submitAssignment(assignmentId, submission);
@@ -1367,7 +1377,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }));
 
       if (activeAssignment && report) {
-        completeAssignmentSubmission(activeAssignment.id, report.overallScore, activeAssignment.sessionType);
+        completeAssignmentSubmission(activeAssignment.id, report.overallScore, activeAssignment.sessionType, 'COMPLETED', undefined, report);
       }
 
       // Add indication to notification list
@@ -1446,7 +1456,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedQuestions[prev.turnIndex] = updatedQ;
 
       const nextTurn = prev.turnIndex + 1;
-      const isCompleteLocal = (nextTurn >= 13) || (nextTurn >= prev.questions.length) || Boolean(options?.timeExpired);
+      const isCompleteLocal = (nextTurn >= 50) || Boolean(options?.timeExpired);
       if (isCompleteLocal) {
         setTimeout(() => endInterview(), 500);
         return {
@@ -1456,6 +1466,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           liveTranscript: '',
           isCompletedAwaitingEvaluation: true
         };
+      }
+
+      // If nextTurn is beyond loaded questions, dynamically generate next turn
+      if (nextTurn >= updatedQuestions.length) {
+        const rawSkills = student?.resume?.skills;
+        const skillList: string[] = Array.isArray(rawSkills) 
+          ? rawSkills 
+          : (rawSkills && typeof rawSkills === 'object' ? Object.values(rawSkills).flat() as string[] : ['Software Engineering', 'System Design', 'Algorithms']);
+        const safeSkills = skillList.length > 0 ? skillList : ['Software Engineering', 'System Design', 'Algorithms'];
+        const chosenSkill = safeSkills[nextTurn % safeSkills.length] || 'distributed systems';
+        const fallbackTexts = [
+          `Can you walk me through an optimization you implemented in ${chosenSkill}, and explain the trade-offs you considered?`,
+          `How would you design a scalable caching strategy for a high-traffic service using ${chosenSkill}?`,
+          `Discuss how you debug complex concurrency issues or race conditions in ${chosenSkill}.`,
+          `Describe a scenario where a database query became a bottleneck and how you indexed or refactored it.`,
+          `How do you ensure data consistency across multiple microservices without introducing significant latency?`,
+          `Explain how you handle error boundaries, graceful degradation, and retry policies in distributed architectures.`,
+          `Could you detail the memory management or garbage collection behavior in your primary programming language?`,
+          `How do you architect system observability with distributed tracing and proactive alerting?`
+        ];
+        const nextQText = fallbackTexts[nextTurn % fallbackTexts.length];
+        updatedQuestions.push({
+          id: `q-${nextTurn + 1}-${Date.now()}`,
+          questionNumber: nextTurn + 1,
+          questionText: nextQText,
+          difficulty: nextTurn >= 8 ? 'ADVANCED' : nextTurn >= 3 ? 'MEDIUM' : 'EASY'
+        });
       }
 
       let nextDifficulty: Difficulty = prev.currentDifficulty;
@@ -1661,7 +1698,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const uploadResumeData = async (payload: FormData | { resumeText: string; fileName?: string } | ParsedResume): Promise<ParsedResume> => {
-    const targetId = student.id || currentUser?.studentId || currentUser?.id || 'me';
+    const isMock = !student.id || student.id.startsWith('stu-') || student.id.startsWith('stu_');
+    const targetId = (!isMock ? student.id : null) || currentUser?.studentId || currentUser?.id || 'me';
     const parsed = await api.student.uploadResume(targetId, payload);
     setStudent(prev => ({ ...prev, resume: parsed }));
     try {

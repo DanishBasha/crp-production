@@ -199,7 +199,7 @@ studentBatchRouter.post(
              VALUES ($1, $2, $3, 'STUDENT', 'ACTIVE', $4)
              ON CONFLICT (email) DO UPDATE SET 
                name = EXCLUDED.name,
-               institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
+               institution_id = EXCLUDED.institution_id
              RETURNING id`,
             [name.trim(), email.toLowerCase().trim(), passwordHash, collegeId]
           );
@@ -482,7 +482,7 @@ studentBatchRouter.post(
          VALUES ($1, $2, $3, 'STUDENT', 'ACTIVE', $4)
          ON CONFLICT (email) DO UPDATE SET
            name = EXCLUDED.name,
-           institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
+           institution_id = EXCLUDED.institution_id
          RETURNING id`,
         [name, email, passwordHash, collegeId]
       );

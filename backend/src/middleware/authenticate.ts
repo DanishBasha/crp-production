@@ -30,8 +30,8 @@ export const authenticate = async (
     }
 
     // DB check: token_version must match — catches revoked tokens after logout
-    const { rows } = await db.query<{ token_version: number; status: string }>(
-      'SELECT token_version, status FROM identity.users WHERE id = $1',
+    const { rows } = await db.query<{ token_version: number; status: string; institution_id: string | null }>(
+      'SELECT token_version, status, institution_id FROM identity.users WHERE id = $1',
       [decoded.id]
     );
     if (rows.length === 0) {
@@ -44,7 +44,10 @@ export const authenticate = async (
       throw new AppError(401, 'Token has been revoked', 'TOKEN_REVOKED');
     }
 
-    req.user = decoded;
+    req.user = {
+      ...decoded,
+      institutionId: rows[0].institution_id || (decoded as any).institutionId || null,
+    };
     next();
   } catch (err) {
     if (err instanceof AppError) {

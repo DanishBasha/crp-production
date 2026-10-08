@@ -227,7 +227,10 @@ studentRouter.patch(
       const user = req.user!;
       const targetId = studentId === 'me' ? user.id : studentId;
 
-      const student = await fetchStudentProfile(targetId);
+      let student = await fetchStudentProfile(targetId);
+      if (!student && user?.id) {
+        student = await fetchStudentProfile(user.id);
+      }
       if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
 
       if (!req.file) throw new AppError(422, 'Resume file required', 'FILE_REQUIRED');
@@ -247,6 +250,17 @@ studentRouter.patch(
          SET resume_url = $1, updated_at = now()
          WHERE user_id = $2 OR id = $2`,
         [resumeUrl, user.id]
+      ).catch(() => {});
+
+      // Record in org.resumes
+      await db.query(
+        `UPDATE org.resumes SET is_current = false WHERE student_id = $1`,
+        [student.id]
+      ).catch(() => {});
+      await db.query(
+        `INSERT INTO org.resumes (student_id, file_name, file_url, is_current)
+         VALUES ($1, $2, $3, true)`,
+        [student.id, req.file.originalname || 'resume.pdf', resumeUrl]
       ).catch(() => {});
 
       sendSuccess(res, { resumeUrl: rows[0]?.resume_url || resumeUrl });
@@ -489,7 +503,10 @@ studentRouter.post(
       const studentId = paramStr(req.params.studentId);
       const parsedResume = req.body;
       const targetId = studentId === 'me' ? req.user!.id : studentId;
-      const student = await fetchStudentProfile(targetId);
+      let student = await fetchStudentProfile(targetId);
+      if (!student && req.user?.id) {
+        student = await fetchStudentProfile(req.user.id);
+      }
       if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
 
       await db.query(
@@ -500,6 +517,20 @@ studentRouter.post(
       await db.query(
         `UPDATE candidate.independent_candidates SET resume_data = $1, updated_at = now() WHERE user_id = $2 OR id = $2`,
         [JSON.stringify(parsedResume), req.user!.id]
+      ).catch(() => {});
+
+      // Sync org.resumes so any other query sees the updated resume
+      const rawText = parsedResume.raw_text || parsedResume.summary || (Array.isArray(parsedResume.skills) ? parsedResume.skills.join(', ') : '');
+      const fileName = parsedResume.file_name || parsedResume.fileName || 'resume.pdf';
+      const fileUrl = parsedResume.file_url || parsedResume.fileUrl || null;
+      await db.query(
+        `UPDATE org.resumes SET is_current = false WHERE student_id = $1`,
+        [student.id]
+      ).catch(() => {});
+      await db.query(
+        `INSERT INTO org.resumes (student_id, parsed_data, is_current, raw_text, file_name, file_url)
+         VALUES ($1, $2, true, $3, $4, $5)`,
+        [student.id, JSON.stringify(parsedResume), rawText, fileName, fileUrl]
       ).catch(() => {});
 
       sendSuccess(res, { resume: parsedResume });

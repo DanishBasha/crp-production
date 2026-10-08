@@ -18,12 +18,14 @@ import { useApp } from '../../context/AppContext';
 interface StudentHistoryModalProps {
   studentIdOrUserId?: string;
   studentId?: string;
+  directReport?: any;
   onClose: () => void;
 }
 
 export const StudentHistoryModal: React.FC<StudentHistoryModalProps> = ({
   studentIdOrUserId,
   studentId,
+  directReport,
   onClose
 }) => {
   const targetId = studentIdOrUserId || studentId || '';
@@ -42,7 +44,7 @@ export const StudentHistoryModal: React.FC<StudentHistoryModalProps> = ({
       setLoading(true);
       setError(null);
       try {
-        const res = await api.admin.getStudentFullHistory(targetId);
+        const res = await api.admin.getStudentFullHistory(targetId, directReport);
         if (isMounted) {
           setData(res);
           if (res.interviewSessions && res.interviewSessions.length > 0) {

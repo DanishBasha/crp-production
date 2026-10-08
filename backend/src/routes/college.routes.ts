@@ -143,7 +143,7 @@ collegeRouter.post(
            ON CONFLICT (email) DO UPDATE SET 
              role = 'DEPARTMENT_ADMIN',
              name = EXCLUDED.name,
-             institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
+             institution_id = EXCLUDED.institution_id
            RETURNING id`,
           [assignedAdminName || name + ' Admin', assignedAdminEmail.toLowerCase().trim(), passwordHash, collegeId]
         );
@@ -243,7 +243,7 @@ collegeRouter.patch(
            ON CONFLICT (email) DO UPDATE SET 
              role = 'DEPARTMENT_ADMIN',
              name = EXCLUDED.name,
-             institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
+             institution_id = EXCLUDED.institution_id
            RETURNING id`,
           [adminName, adminEmail, passwordHash, resolvedCollegeId]
         );
@@ -552,7 +552,7 @@ collegeRouter.post(
            ON CONFLICT (email) DO UPDATE SET 
              role = 'PROGRAM_ADMIN',
              name = EXCLUDED.name,
-             institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
+             institution_id = EXCLUDED.institution_id
            RETURNING id`,
           [assignedAdminName || name + ' Admin', assignedAdminEmail.toLowerCase().trim(), passwordHash, collegeId]
         );
@@ -637,7 +637,7 @@ collegeRouter.patch(
            ON CONFLICT (email) DO UPDATE SET 
              role = 'PROGRAM_ADMIN',
              name = EXCLUDED.name,
-             institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
+             institution_id = EXCLUDED.institution_id
            RETURNING id`,
           [assignedAdminName || (name || 'Program') + ' Admin', assignedAdminEmail.toLowerCase().trim(), passwordHash, collegeId]
         );
@@ -850,7 +850,7 @@ collegeRouter.post(
          ON CONFLICT (email) DO UPDATE SET 
            role = 'COUNSELLOR',
            name = EXCLUDED.name,
-           institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
+           institution_id = EXCLUDED.institution_id
          RETURNING id`,
         [name, email, passwordHash, collegeId]
       );
@@ -934,7 +934,7 @@ collegeRouter.post(
              ON CONFLICT (email) DO UPDATE SET 
                role = 'COUNSELLOR',
                name = EXCLUDED.name,
-               institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
+               institution_id = EXCLUDED.institution_id
              RETURNING id`,
             [name, email.toLowerCase(), passwordHash, collegeId]
           );

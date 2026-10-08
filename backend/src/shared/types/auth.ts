@@ -6,6 +6,7 @@ export interface AuthUser {
   role: UserRole;
   name: string;
   tokenVersion: number;  // compared to DB on every request — revocation mechanism
+  institutionId?: string | null;
 }
 
 export interface JWTPayload extends AuthUser {

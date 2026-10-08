@@ -134,7 +134,8 @@ adminRouter.get(
   ),
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const collegeId = req.query.collegeId as string;
+      const authUser = (req as AuthRequest).user;
+      const collegeId = (req.query.collegeId as string) || authUser?.institutionId || null;
       let query = `
         SELECT
           id,
@@ -197,6 +198,26 @@ adminRouter.post(
       const instId = (b.collegeId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(b.collegeId))
         ? b.collegeId
         : defaultInstId;
+
+      // Duplicate assessment title validation
+      const testTitle = (b.title || '').trim();
+      if (!testTitle) {
+        throw new AppError(422, 'Assessment title is required', 'VALIDATION_ERROR');
+      }
+      const { rows: dupRows } = await db.query(
+        `SELECT id, title FROM org.interview_assignments
+         WHERE LOWER(TRIM(title)) = LOWER(TRIM($1))
+           AND (institution_id = $2 OR (institution_id IS NULL AND $2 IS NULL))
+         LIMIT 1`,
+        [testTitle, instId]
+      );
+      if (dupRows.length > 0) {
+        throw new AppError(
+          409,
+          `An assessment named "${testTitle}" already exists. Please rename the test to a unique title.`,
+          'DUPLICATE_TITLE'
+        );
+      }
 
       const { rows } = await db.query(
         `INSERT INTO org.interview_assignments (
@@ -470,7 +491,9 @@ adminRouter.get(
   requireAdminOrStaff,
   async (req: Request, res: Response): Promise<void> => {
     try {
+      const authUser = (req as AuthRequest).user;
       const search = (req.query.search as string) || '';
+      const collegeId = (req.query.collegeId as string) || authUser?.institutionId || null;
       let query = `
         SELECT
           s.id,
@@ -502,11 +525,15 @@ adminRouter.get(
           s.created_at AS "createdAt"
         FROM org.students s
         JOIN identity.users u ON u.id = s.user_id
+        LEFT JOIN org.programs p ON p.id = s.program_id
+        LEFT JOIN org.batches b ON b.id = s.batch_id
+        LEFT JOIN org.programs pb ON pb.id = b.program_id
+        WHERE ($1::uuid IS NULL OR COALESCE(u.institution_id, p.institution_id, pb.institution_id) = $1::uuid)
       `;
-      const params: any[] = [];
+      const params: any[] = [collegeId];
       if (search) {
         params.push(search);
-        query += ` WHERE u.name ILIKE '%' || $1 || '%' OR u.email ILIKE '%' || $1 || '%' OR s.roll_number ILIKE '%' || $1 || '%'`;
+        query += ` AND (u.name ILIKE '%' || $2 || '%' OR u.email ILIKE '%' || $2 || '%' OR s.roll_number ILIKE '%' || $2 || '%')`;
       }
       query += ` ORDER BY s.created_at DESC`;
 

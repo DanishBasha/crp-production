@@ -33,6 +33,7 @@ export const AssessmentSubmissionsPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('ALL');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [selectedStudentReport, setSelectedStudentReport] = useState<any | null>(null);
 
   // Return to previous view via back gesture
   useBackHandler(Boolean(selectedStudentId), () => setSelectedStudentId(null));
@@ -73,6 +74,7 @@ export const AssessmentSubmissionsPage: React.FC = () => {
   const departmentsList = Array.from(new Set(submissions.map((s) => s.department).filter(Boolean)));
 
   const handleOpenStudentProfile = (sub: any) => {
+    setSelectedStudentReport(sub.report || null);
     setSelectedStudentId(sub.studentId);
   };
 
@@ -350,12 +352,12 @@ export const AssessmentSubmissionsPage: React.FC = () => {
                         <div className="inline-flex items-center space-x-1.5" onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
-                            onClick={() => setSelectedStudentId(sub.studentId)}
+                            onClick={() => handleOpenStudentProfile(sub)}
                             className="px-2.5 py-1 text-xs font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer inline-flex items-center space-x-1"
                             title="Inspect test results and transcripts modal"
                           >
                             <Eye className="w-3.5 h-3.5" />
-                            <span>Activity</span>
+                            <span>Activity & Report</span>
                           </button>
                         </div>
                       </td>
@@ -372,7 +374,11 @@ export const AssessmentSubmissionsPage: React.FC = () => {
       {selectedStudentId && (
         <StudentHistoryModal
           studentId={selectedStudentId}
-          onClose={() => setSelectedStudentId(null)}
+          directReport={selectedStudentReport}
+          onClose={() => {
+            setSelectedStudentId(null);
+            setSelectedStudentReport(null);
+          }}
         />
       )}
     </div>

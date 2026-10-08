@@ -71,7 +71,7 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
   const isClassLocked = Boolean(lockClassScope || defaultRole === 'COUNSELLOR');
   const isDepartmentLocked = Boolean(!isClassLocked && (lockDepartmentScope || defaultRole === 'DEPARTMENT_ADMIN'));
 
-  const { currentUser, createAssignment } = useApp();
+  const { currentUser, createAssignment, assignments } = useApp();
   const activeRole = defaultRole || (currentUser?.role as any) || 'SUPER_ADMIN';
 
   // 1. Session Type: Technical, Listening, or Both
@@ -390,6 +390,24 @@ export const AssignSessionModal: React.FC<AssignSessionModalProps> = ({
       targetDomainOrTrack = targetStudent ? `${targetStudent.name} (${targetStudent.rollNumber || 'Direct'})` : 'Individual Candidate';
     } else if (targetScope === 'MY_MENTEES') {
       targetDomainOrTrack = 'Assigned Faculty Mentees';
+    }
+
+    const cleanTitle = title.trim();
+    if (!cleanTitle) {
+      setError('Please provide a title for the assessment.');
+      setSubmitting(false);
+      return;
+    }
+
+    // Check if an assessment with the same name already exists in this institution
+    const isDuplicate = (assignments || []).some(a => 
+      a.title?.trim().toLowerCase() === cleanTitle.toLowerCase() &&
+      (!a.collegeId || !currentUser?.collegeId || a.collegeId === currentUser.collegeId)
+    );
+    if (isDuplicate) {
+      setError(`An assessment with the name "${cleanTitle}" already exists. Please rename the test to a unique title.`);
+      setSubmitting(false);
+      return;
     }
 
     try {
