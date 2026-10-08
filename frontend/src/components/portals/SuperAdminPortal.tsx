@@ -1504,14 +1504,20 @@ export const SuperAdminPortal: React.FC = () => {
                           </td>
                           <td className="py-3.5 px-5 text-neutral-800 font-medium" onClick={(e) => e.stopPropagation()}>
                             <div className="py-1">
-                              <span className="font-semibold text-neutral-900 block">
-                                {dept.assignedAdminName || 'Head of Department'}
-                              </span>
-                              <span className="text-[10px] text-neutral-400 block font-mono">Department Counselor</span>
+                              {dept.assignedAdminName ? (
+                                <>
+                                  <span className="font-semibold text-neutral-900 block">
+                                    {dept.assignedAdminName}
+                                  </span>
+                                  <span className="text-[10px] text-neutral-400 block font-mono">Department Counselor</span>
+                                </>
+                              ) : (
+                                <span className="text-neutral-400 font-normal italic">Unassigned</span>
+                              )}
                             </div>
                           </td>
                           <td className="py-3.5 px-5 font-mono text-neutral-500">
-                            {dept.assignedAdminEmail || 'admin.' + dept.code.toLowerCase() + '@college.edu'}
+                            {dept.assignedAdminEmail || <span className="text-neutral-400 font-sans italic">—</span>}
                           </td>
                           <td className="py-3.5 px-5">
                             <span className="font-bold text-neutral-900">{deptStudents.length}</span>

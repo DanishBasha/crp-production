@@ -345,23 +345,6 @@ authRouter.post('/register-institution', async (req: Request, res: Response): Pr
       [instRow.id, adminName, adminEmail]
     ).catch(() => {});
 
-    // 6. Seed foundational departments
-    await client.query(`
-      INSERT INTO org.departments (institution_id, name, code, is_active)
-      VALUES 
-        ($1, 'Computer Science & Engineering', 'CSE', true),
-        ($1, 'Information Technology', 'IT', true),
-        ($1, 'Electronics & Communication Engineering', 'ECE', true)
-      ON CONFLICT DO NOTHING
-    `, [instRow.id]).catch(() => {});
-
-    // 7. Seed foundational program
-    await client.query(`
-      INSERT INTO org.programs (institution_id, name, code, target_department, admin_permissions)
-      VALUES ($1, 'B.Tech Computer Science & Engineering', 'BTECH-CSE', 'Computer Science & Engineering', '["CAN_VIEW_STUDENT_PROGRESS", "CAN_ASSIGN_INTERVIEWS", "CAN_MANAGE_STUDENTS"]'::jsonb)
-      ON CONFLICT DO NOTHING
-    `, [instRow.id]).catch(() => {});
-
     await client.query('COMMIT');
 
     const authUser: AuthUser = {

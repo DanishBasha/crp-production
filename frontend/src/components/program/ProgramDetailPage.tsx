@@ -151,9 +151,9 @@ export const ProgramDetailPage: React.FC = () => {
             <div className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Designated Lead Admin</div>
             <div className="font-bold text-xs text-neutral-900 flex items-center space-x-1.5">
               <UserCheck className="w-3.5 h-3.5 text-blue-600" />
-              <span>{program.assignedAdminName || 'Lead Mentor Assigned'}</span>
+              <span>{program.assignedAdminName || <span className="text-neutral-400 font-normal italic">Unassigned</span>}</span>
             </div>
-            <div className="text-[11px] font-mono text-neutral-500">{program.assignedAdminEmail || 'program.admin@college.edu'}</div>
+            <div className="text-[11px] font-mono text-neutral-500">{program.assignedAdminEmail || '—'}</div>
           </div>
         </div>
 

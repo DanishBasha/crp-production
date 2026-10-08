@@ -101,23 +101,6 @@ ownerRouter.post('/colleges', async (req: Request, res: Response): Promise<void>
 
     const inst = rows[0];
 
-    // Seed foundational departments
-    await db.query(`
-      INSERT INTO org.departments (institution_id, name, code, is_active)
-      VALUES 
-        ($1, 'Computer Science & Engineering', 'CSE', true),
-        ($1, 'Information Technology', 'IT', true),
-        ($1, 'Electronics & Communication Engineering', 'ECE', true)
-      ON CONFLICT DO NOTHING
-    `, [inst.id]).catch(() => {});
-
-    // Seed foundational program
-    await db.query(`
-      INSERT INTO org.programs (institution_id, name, code, target_department, admin_permissions)
-      VALUES ($1, 'B.Tech Computer Science & Engineering', 'BTECH-CSE', 'Computer Science & Engineering', '["CAN_VIEW_STUDENT_PROGRESS", "CAN_ASSIGN_INTERVIEWS", "CAN_MANAGE_STUDENTS"]'::jsonb)
-      ON CONFLICT DO NOTHING
-    `, [inst.id]).catch(() => {});
-
     sendSuccess(res, inst, 201);
   } catch (err) {
     sendError(res, err);
