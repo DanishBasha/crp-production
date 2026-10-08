@@ -97,7 +97,7 @@ export async function createAttemptAndSession(
           subdivision_id, assessment_version, scoring_version, status, started_at)
        VALUES ($1,$2,'TECHNICAL',$3,$4,$5,1,'v1.0','IN_PROGRESS',now())
        RETURNING id`,
-      [assessmentRows[0].id, student.id, student.program_id, student.batch_id, student.subdivision_id]
+      [assessmentRows[0].id, student.id, student.program_id ?? null, student.batch_id ?? null, student.subdivision_id ?? null]
     );
     const attemptId = attemptRows[0].id;
 

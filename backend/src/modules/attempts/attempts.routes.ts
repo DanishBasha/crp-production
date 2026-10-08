@@ -75,8 +75,8 @@ attemptsRouter.post(
               assessment_version, scoring_version, credit_policy_snapshot, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7, '1.0', $8, 'IN_PROGRESS')
            RETURNING id, assessment_id, student_id, status, started_at`,
-          [assessmentId, student_id, assessment.interview_type, program_id, batch_id,
-           subdivision_id, assessment.version, JSON.stringify({ credit_cost: creditCost })]
+          [assessmentId, student_id, assessment.interview_type, program_id ?? null, batch_id ?? null,
+           subdivision_id ?? null, assessment.version, JSON.stringify({ credit_cost: creditCost })]
         );
         attempt = rows;
       } catch (insertErr: unknown) {
