@@ -255,70 +255,156 @@ ownerRouter.delete(
 
       await client.query('BEGIN');
 
-      // 1. Identify all admin/staff user IDs tied to this institution (never delete PLATFORM_OWNER)
-      const { rows: adminUsers } = await client.query<{ id: string }>(
-        `SELECT DISTINCT u.id FROM identity.users u
-         LEFT JOIN identity.role_assignments ra ON ra.user_id = u.id
-         WHERE (u.institution_id = $1 OR ra.institution_id = $1)
-           AND u.role != 'PLATFORM_OWNER'`,
+      // 1. Identify all student IDs and their user IDs tied to this institution
+      const { rows: studentRows } = await client.query<{ id: string; user_id: string }>(
+        `SELECT DISTINCT s.id, s.user_id FROM org.students s
+         LEFT JOIN org.programs p ON p.id = s.program_id
+         LEFT JOIN org.batches b ON b.id = s.batch_id
+         LEFT JOIN org.programs pb ON pb.id = b.program_id
+         LEFT JOIN identity.users u ON u.id = s.user_id
+         WHERE p.institution_id = $1
+            OR pb.institution_id = $1
+            OR u.institution_id = $1`,
         [collegeId]
       );
-      const userIdsToDelete = adminUsers.map(u => u.id);
+      const studentIds = studentRows.map(s => s.id);
+      const studentUserIds = studentRows.map(s => s.user_id).filter(Boolean);
 
-      // 2. Delete pending invites for this institution
-      await client.query(`DELETE FROM identity.pending_invites WHERE institution_id = $1`, [collegeId]).catch(() => {});
+      // 2. Identify all user IDs tied to this institution across all roles (students, admins, staff, faculty)
+      const { rows: usersRows } = await client.query<{ id: string; email: string }>(
+        `SELECT DISTINCT u.id, u.email FROM identity.users u
+         LEFT JOIN identity.role_assignments ra ON ra.user_id = u.id
+         LEFT JOIN org.students s ON s.user_id = u.id
+         LEFT JOIN org.programs p ON p.id = s.program_id
+         LEFT JOIN org.batches b ON b.id = s.batch_id
+         LEFT JOIN org.programs pb ON pb.id = b.program_id
+         LEFT JOIN org.department_staff ds ON ds.user_id = u.id
+         WHERE (
+           u.institution_id = $1
+           OR ra.institution_id = $1
+           OR p.institution_id = $1
+           OR pb.institution_id = $1
+           OR ds.institution_id = $1
+           OR u.id = ANY($2::uuid[])
+         )
+         AND u.role != 'PLATFORM_OWNER'
+         AND LOWER(u.email) != 'danishbasha18@gmail.com'`,
+        [collegeId, studentUserIds]
+      );
+      const userIdsToDelete = [...new Set(usersRows.map(u => u.id))];
+      const userEmailsToDelete = [...new Set(usersRows.map(u => u.email.toLowerCase()))];
 
-      // 3. Delete role assignments for this institution or these users
-      await client.query(
-        `DELETE FROM identity.role_assignments WHERE institution_id = $1 OR user_id = ANY($2::uuid[])`,
-        [collegeId, userIdsToDelete]
-      ).catch(() => {});
+      // 3. Identify all assessment attempts tied to these students or institution programs
+      const { rows: attemptRows } = await client.query<{ id: string }>(
+        `SELECT DISTINCT a.id FROM assessment.assessment_attempts a
+         LEFT JOIN org.programs p ON p.id = a.program_id
+         WHERE (a.student_id = ANY($1::uuid[]) OR p.institution_id = $2)`,
+        [studentIds, collegeId]
+      );
+      const attemptIds = attemptRows.map(a => a.id);
 
-      // 4. Delete assignments & trainer tenures
-      await client.query(`DELETE FROM org.interview_assignments WHERE institution_id = $1`, [collegeId]).catch(() => {});
-      await client.query(`DELETE FROM org.trainer_tenures WHERE institution_id = $1`, [collegeId]).catch(() => {});
+      // 4. Delete Session, Question, Evaluation & Assessment Attempt details
+      if (attemptIds.length > 0 || studentIds.length > 0) {
+        await client.query(
+          `DELETE FROM session.interview_embeddings 
+           WHERE session_id IN (SELECT id FROM session.assessment_sessions WHERE attempt_id = ANY($1::uuid[]))
+              OR session_id IN (SELECT id FROM session.interview_sessions WHERE student_id = ANY($2::uuid[]))`,
+          [attemptIds, studentIds]
+        ).catch(() => {});
 
-      // 5. Delete department classes & staff & departments
-      await client.query(`DELETE FROM org.department_classes WHERE institution_id = $1`, [collegeId]).catch(() => {});
-      await client.query(`DELETE FROM org.department_staff WHERE institution_id = $1`, [collegeId]).catch(() => {});
-      await client.query(`DELETE FROM org.departments WHERE institution_id = $1`, [collegeId]).catch(() => {});
+        await client.query(
+          `DELETE FROM session.interview_transcripts 
+           WHERE session_id IN (SELECT id FROM session.assessment_sessions WHERE attempt_id = ANY($1::uuid[]))
+              OR student_id = ANY($2::uuid[])`,
+          [attemptIds, studentIds]
+        ).catch(() => {});
 
-      // 6. Delete students & batches & programs
-      await client.query(
-        `DELETE FROM org.students
-         WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $1)
-            OR batch_id IN (SELECT b.id FROM org.batches b JOIN org.programs p ON p.id = b.program_id WHERE p.institution_id = $1)
-            OR user_id = ANY($2::uuid[])`,
-        [collegeId, userIdsToDelete]
-      ).catch(() => {});
-
-      await client.query(
-        `DELETE FROM org.batches
-         WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $1)`,
-        [collegeId]
-      ).catch(() => {});
-
-      await client.query(`DELETE FROM org.programs WHERE institution_id = $1`, [collegeId]).catch(() => {});
-
-      // 7. Delete corresponding admin / staff users from identity.users
-      if (userIdsToDelete.length > 0) {
-        await client.query(`UPDATE system.audit_logs SET actor_user_id = NULL WHERE actor_user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
-        await client.query(`UPDATE agent.agent_runs SET triggered_by_user_id = NULL WHERE triggered_by_user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
-        await client.query(`DELETE FROM org.faculty_profiles WHERE user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
-        await client.query(`DELETE FROM org.student_mentor_assignments WHERE mentor_user_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
-        await client.query(`DELETE FROM org.trainer_subdivision_assignments WHERE trainer_user_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
-        await client.query(`DELETE FROM placement.mentor_verifications WHERE mentor_user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
-        await client.query(`DELETE FROM identity.users WHERE id = ANY($1::uuid[]) AND role != 'PLATFORM_OWNER'`, [userIdsToDelete]).catch(() => {});
+        await client.query(`DELETE FROM evaluation.responses WHERE attempt_id = ANY($1::uuid[])`, [attemptIds]).catch(() => {});
+        await client.query(`DELETE FROM session.questions WHERE attempt_id = ANY($1::uuid[])`, [attemptIds]).catch(() => {});
+        await client.query(`DELETE FROM performance.assessment_reports WHERE attempt_id = ANY($1::uuid[]) OR student_id = ANY($2::uuid[])`, [attemptIds, studentIds]).catch(() => {});
+        await client.query(`DELETE FROM performance.performance_snapshots WHERE attempt_id = ANY($1::uuid[]) OR student_id = ANY($2::uuid[])`, [attemptIds, studentIds]).catch(() => {});
+        await client.query(`DELETE FROM performance.skill_performances WHERE attempt_id = ANY($1::uuid[]) OR student_id = ANY($2::uuid[])`, [attemptIds, studentIds]).catch(() => {});
+        await client.query(`DELETE FROM session.assessment_sessions WHERE attempt_id = ANY($1::uuid[])`, [attemptIds]).catch(() => {});
+        await client.query(`DELETE FROM session.interview_sessions WHERE student_id = ANY($1::uuid[])`, [studentIds]).catch(() => {});
+        await client.query(`DELETE FROM assessment.assessment_attempts WHERE id = ANY($1::uuid[]) OR student_id = ANY($2::uuid[])`, [attemptIds, studentIds]).catch(() => {});
       }
 
-      // 8. Delete the institution itself
+      // 5. Delete Student performance, credits, placement, mentor and resume data
+      if (studentIds.length > 0) {
+        await client.query(`DELETE FROM performance.student_skills WHERE student_id = ANY($1::uuid[])`, [studentIds]).catch(() => {});
+        await client.query(`DELETE FROM performance.learning_recommendations WHERE student_id = ANY($1::uuid[])`, [studentIds]).catch(() => {});
+        await client.query(`DELETE FROM performance.learning_plans WHERE student_id = ANY($1::uuid[])`, [studentIds]).catch(() => {});
+        await client.query(`DELETE FROM performance.performance_profiles WHERE student_id = ANY($1::uuid[])`, [studentIds]).catch(() => {});
+        await client.query(`DELETE FROM credit.credit_transactions WHERE student_id = ANY($1::uuid[])`, [studentIds]).catch(() => {});
+        await client.query(`DELETE FROM credit.credit_accounts WHERE student_id = ANY($1::uuid[])`, [studentIds]).catch(() => {});
+        await client.query(`DELETE FROM credit.credit_policies WHERE institution_id = $1 OR student_id = ANY($2::uuid[])`, [collegeId, studentIds]).catch(() => {});
+        await client.query(`DELETE FROM placement.checklist_progress WHERE student_id = ANY($1::uuid[])`, [studentIds]).catch(() => {});
+        await client.query(`DELETE FROM placement.mentor_verifications WHERE student_id = ANY($1::uuid[]) OR mentor_user_id = ANY($2::uuid[])`, [studentIds, userIdsToDelete]).catch(() => {});
+        await client.query(`DELETE FROM placement.placement_eligibility WHERE student_id = ANY($1::uuid[])`, [studentIds]).catch(() => {});
+        await client.query(`DELETE FROM org.resumes WHERE student_id = ANY($1::uuid[])`, [studentIds]).catch(() => {});
+        await client.query(`DELETE FROM org.student_mentor_assignments WHERE student_id = ANY($1::uuid[]) OR mentor_user_id = ANY($2::uuid[]) OR assigned_by = ANY($2::uuid[])`, [studentIds, userIdsToDelete]).catch(() => {});
+      }
+
+      // 6. Delete all students of this college
+      await client.query(
+        `DELETE FROM org.students
+         WHERE id = ANY($1::uuid[])
+            OR user_id = ANY($2::uuid[])
+            OR program_id IN (SELECT id FROM org.programs WHERE institution_id = $3)`,
+        [studentIds, userIdsToDelete, collegeId]
+      ).catch(() => {});
+
+      // 7. Delete institution structure (subdivisions, batches, programs, departments, classes, staff, assignments)
+      await client.query(`DELETE FROM org.trainer_subdivision_assignments WHERE trainer_user_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
+      await client.query(`DELETE FROM org.subdivisions WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $1)`, [collegeId]).catch(() => {});
+      await client.query(`DELETE FROM org.batches WHERE program_id IN (SELECT id FROM org.programs WHERE institution_id = $1)`, [collegeId]).catch(() => {});
+      await client.query(`DELETE FROM org.programs WHERE institution_id = $1`, [collegeId]).catch(() => {});
+      await client.query(`DELETE FROM org.interview_assignments WHERE institution_id = $1`, [collegeId]).catch(() => {});
+      await client.query(`DELETE FROM org.trainer_tenures WHERE institution_id = $1`, [collegeId]).catch(() => {});
+      await client.query(`DELETE FROM knowledge.knowledge_documents WHERE institution_id = $1`, [collegeId]).catch(() => {});
+      await client.query(`DELETE FROM org.department_classes WHERE institution_id = $1`, [collegeId]).catch(() => {});
+      await client.query(`DELETE FROM org.department_staff WHERE institution_id = $1 OR user_id = ANY($2::uuid[])`, [collegeId, userIdsToDelete]).catch(() => {});
+      await client.query(`DELETE FROM org.departments WHERE institution_id = $1`, [collegeId]).catch(() => {});
+      await client.query(`DELETE FROM org.faculty_profiles WHERE user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
+
+      // 8. Delete invitations, roles, password resets, auth tokens, and users
+      await client.query(`DELETE FROM identity.pending_invites WHERE institution_id = $1 OR LOWER(email) = ANY($2::text[])`, [collegeId, userEmailsToDelete]).catch(() => {});
+      await client.query(`DELETE FROM identity.role_assignments WHERE institution_id = $1 OR user_id = ANY($2::uuid[])`, [collegeId, userIdsToDelete]).catch(() => {});
+
+      if (userEmailsToDelete.length > 0) {
+        await client.query(`DELETE FROM identity.password_resets WHERE LOWER(email) = ANY($1::text[])`, [userEmailsToDelete]).catch(() => {});
+      }
+
+      if (userIdsToDelete.length > 0) {
+        // Clear foreign key references from system and agent logs
+        await client.query(`UPDATE system.audit_logs SET actor_user_id = NULL WHERE actor_user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
+        await client.query(`UPDATE agent.agent_runs SET triggered_by_user_id = NULL WHERE triggered_by_user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
+        await client.query(`DELETE FROM agent.agent_runs WHERE student_id = ANY($1::uuid[]) OR triggered_by_user_id = ANY($2::uuid[])`, [studentIds, userIdsToDelete]).catch(() => {});
+
+        // Clear auth sessions
+        await client.query(`DELETE FROM auth.sessions WHERE user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
+        await client.query(`DELETE FROM auth.refresh_tokens WHERE user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
+        await client.query(`DELETE FROM auth.identities WHERE user_id = ANY($1::uuid[])`, [userIdsToDelete]).catch(() => {});
+
+        // Delete ALL users belonging to this college from identity.users (protecting PLATFORM_OWNER)
+        await client.query(
+          `DELETE FROM identity.users 
+           WHERE id = ANY($1::uuid[]) 
+             AND role != 'PLATFORM_OWNER' 
+             AND LOWER(email) != 'danishbasha18@gmail.com'`,
+          [userIdsToDelete]
+        );
+      }
+
+      // 9. Delete the institution itself
       await client.query(`DELETE FROM org.institutions WHERE id = $1`, [collegeId]);
 
       await client.query('COMMIT');
 
       sendSuccess(res, {
-        message: 'Institution and all corresponding administrators/data removed successfully',
-        removedAdminsCount: userIdsToDelete.length
+        message: 'Institution and all corresponding users and data have been completely deleted.',
+        deletedUsersCount: userIdsToDelete.length,
+        deletedStudentsCount: studentIds.length
       });
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
