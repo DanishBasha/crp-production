@@ -8,7 +8,9 @@
  *   4. Communication = Fluency 35% + Pace 25% + Fillers 20% + Clarity 20%;
  *      turn overall = Technical 70% + Communication 30%   (PROJECT_BLUEPRINT §9.2)
  *   5. Difficulty moves one level: technical ≥ 80 → up, < 50 → down
- *   6. Next question follows up on this answer (POST /ai/generate-question)
+ *   6. Next question (POST /ai/generate-question): with a resume, questions alternate
+ *      between an item from the resume and a follow-up on the answer (interviewPlanner);
+ *      without one, each question follows up on the latest answer
  *   7. After the last turn (or when time runs out) the server builds the report and
  *      completes the attempt.
  * All state lives server-side (sessionContextService) and survives reconnects/restarts.
@@ -17,7 +19,8 @@
 import axios from 'axios';
 import { env } from '../config/env';
 import { db } from '../shared/db/pool';
-import { sessionContextService, InterviewState, TurnResult } from './sessionContextService';
+import { sessionContextService, InterviewState, TurnResult, QuestionSource } from './sessionContextService';
+import { buildResumeTopics, chooseQuestionFocus, pickResumeTopic } from './interviewPlanner';
 import { concludeLiveInterview, terminateLiveInterview } from './interviewSessionService';
 import { buildInterviewReport, InterviewReport } from './interviewReport';
 import {
@@ -134,8 +137,20 @@ async function generateNextQuestion(
   state: InterviewState,
   meta: AudioStartMeta,
   difficulty: Difficulty,
-): Promise<{ text: string; category: string; keyPoints: string[] }> {
+): Promise<{ text: string; category: string; keyPoints: string[]; source: QuestionSource; topicKey?: string }> {
   const resume = state.resume;
+  const turns = state.turn_results ?? [];
+  // An interview assigned on a topic stays on that topic; otherwise, with a resume,
+  // alternate: a resume item, then a follow-up on the answer about it
+  const assignedTopic = state.assigned_topic?.trim() || '';
+  const topic = assignedTopic
+    ? null
+    : pickResumeTopic(buildResumeTopics(resume), state.resume_topics_asked ?? [], turns);
+  const focus = chooseQuestionFocus({
+    topicAvailable: topic !== null,
+    lastTurn: turns[turns.length - 1],
+    followUpsInARow: state.follow_ups_in_a_row ?? 0,
+  });
   try {
     const { data } = await axios.post<{ question_text?: string; category?: string | null; key_points?: string[] }>(
       `${env.AI_SERVICE_URL}/ai/generate-question`,
@@ -143,11 +158,14 @@ async function generateNextQuestion(
         student_name: resume?.name ?? 'Candidate',
         skills: resume?.skills ?? [],
         projects: resume?.projects ?? [],
+        resume_text: resume?.text ?? '',
+        focus,
+        resume_topic: focus === 'resume_topic' && topic ? topic.detail : '',
         difficulty,
-        domain: meta.domain,
+        domain: assignedTopic || meta.domain,
         // The candidate's actual answers (plus evaluator notes) let the AI ask a
         // follow-up on what they just said instead of an unrelated question.
-        previous_turns: (state.turn_results ?? []).slice(-5).map((t) => ({
+        previous_turns: turns.slice(-5).map((t) => ({
           question_text: t.question,
           student_answer: t.answer,
           difficulty: t.difficulty,
@@ -158,18 +176,24 @@ async function generateNextQuestion(
       { timeout: AI_TIMEOUT_MS },
     );
     const text = data?.question_text?.trim();
-    const asked = new Set((state.turn_results ?? []).map((t) => t.question.trim().toLowerCase()));
+    const asked = new Set(turns.map((t) => t.question.trim().toLowerCase()));
     if (text && !asked.has(text.toLowerCase())) {
       const keyPoints = (data.key_points ?? [])
         .filter((point): point is string => typeof point === 'string' && point.trim().length > 0)
         .map((point) => point.trim().slice(0, 160))
         .slice(0, 6);
-      return { text, category: data.category?.trim() || 'Technical', keyPoints };
+      return {
+        text,
+        category: data.category?.trim() || 'Technical',
+        keyPoints,
+        source: focus === 'resume_topic' ? 'resume' : 'follow_up',
+        topicKey: focus === 'resume_topic' ? topic?.key : undefined,
+      };
     }
   } catch (err) {
     console.error('[interview] generate-question failed, using fallback question:', (err as Error).message);
   }
-  return { text: FALLBACK_QUESTIONS[difficulty], category: 'Fundamentals', keyPoints: [] };
+  return { text: FALLBACK_QUESTIONS[difficulty], category: 'Fundamentals', keyPoints: [], source: 'fallback' };
 }
 
 // ── Completion ────────────────────────────────────────────────────────────────
@@ -325,6 +349,7 @@ export async function triggerLLMEvaluation(
     feedback: evaluation.feedback ?? '',
     strengths: evaluation.strengths ?? '',
     weaknesses: evaluation.weaknesses ?? '',
+    questionSource: state.current_question_source ?? (meta.turnNumber === 1 ? 'introduction' : 'follow_up'),
     ts: new Date().toISOString(),
   };
   state.turn_results = [...(state.turn_results ?? []), result];
@@ -355,6 +380,13 @@ export async function triggerLLMEvaluation(
     state.current_question_turn = state.current_turn;
     state.current_category = next.category;
     state.current_key_points = next.keyPoints;
+    state.current_question_source = next.source;
+    if (next.source === 'resume' && next.topicKey) {
+      state.resume_topics_asked = [...(state.resume_topics_asked ?? []), next.topicKey];
+      state.follow_ups_in_a_row = 0;
+    } else if (next.source === 'follow_up') {
+      state.follow_ups_in_a_row = (state.follow_ups_in_a_row ?? 0) + 1;
+    }
     state.do_not_ask_or_repeat = [...state.do_not_ask_or_repeat, next.text].slice(-15);
     await sessionContextService.setState(sessionId, state);
   }

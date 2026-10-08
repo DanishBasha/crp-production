@@ -35,7 +35,7 @@ const MAX_TRANSCRIPT_CHARS = 5000;
 const MAX_BUFFERED_AUDIO_BYTES = 5 * 1024 * 1024;
 const MAX_PENDING_MESSAGES = 200;
 // After audio_end, give Deepgram a moment to deliver its last final result
-const DEEPGRAM_FLUSH_MS = 750;
+const DEEPGRAM_FLUSH_MS = 1200;
 const KEEPALIVE_MS = 25_000;
 
 interface Turn {
@@ -161,14 +161,10 @@ function handleConnection(ws: WebSocket, sessionId: string, token: string | null
       if (current.done) { if (isFinal) await finishInterview(sessionId); return; }
       serverTranscript = deepgramService.closeSession(sessionId);
     }
-    const clientTranscript = typeof message.transcript === 'string' ? message.transcript.trim() : '';
-    // Use the most comprehensive transcript between Deepgram and browser WebSpeech
-    const chosenTranscript = (serverTranscript.length >= clientTranscript.length ? serverTranscript : clientTranscript) || serverTranscript || clientTranscript;
-    console.log(`[interviewGateway] Final turn transcript len=${chosenTranscript.length}: "${chosenTranscript.slice(0, 100)}"`);
-
+    const clientTranscript = typeof message.transcript === 'string' ? message.transcript : '';
     // Delivery measured by the browser: speaking time (→ WPM), long pauses, response latency
     const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
-    await finishTurn(current, chosenTranscript, {
+    await finishTurn(current, serverTranscript || clientTranscript, {
       durationSec: num(message.durationSec),
       pauseCount: num(message.pauseCount),
       longestPauseSec: num(message.longestPauseSec),

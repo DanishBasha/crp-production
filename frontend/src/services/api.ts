@@ -1679,55 +1679,42 @@ class ApiClient {
       studentId: string, 
       payload: FormData | { resumeText: string; fileName?: string; file?: File } | ParsedResume
     ): Promise<ParsedResume> => {
-      let parsed: ParsedResume;
-
-      if ('skills' in payload && 'projects' in payload) {
-        parsed = payload as ParsedResume;
-      } else {
-        const rawText = (payload as any)?.resumeText || '';
-        const fileName = (payload as any)?.fileName || 'Uploaded_Resume.pdf';
-        try {
-          const res = await this._fetch<{ data: ParsedResume }>('/students/parse-resume', {
-            method: 'POST',
-            body: JSON.stringify({ resumeText: rawText, fileName }),
-          });
-          if (res?.data && res.data.skills) {
-            parsed = res.data;
-          } else {
-            parsed = parseResumeContent(rawText, fileName);
-          }
-        } catch (err) {
-          console.warn('[api.student.uploadResume] Groq AI parse fallback to local parser:', err);
-          parsed = parseResumeContent(rawText, fileName);
-        }
-      }
-
-      // 1. If a binary File or FormData is available, upload to /resume to store resume_url in Supabase
-      try {
+      // The server reads the resume itself (PDF, DOCX or TXT) and keeps only facts written
+      // in it; errors reach the upload dialog — a resume is never filled with guessed content.
+      const id = encodeURIComponent(studentId);
+      let resume: ParsedResume | null;
+      const file = payload instanceof FormData ? null : (payload as { file?: File }).file;
+      if (payload instanceof FormData || file instanceof File) {
+        let form: FormData;
         if (payload instanceof FormData) {
-          await this._fetch(`/students/${encodeURIComponent(studentId)}/resume`, {
-            method: 'PATCH',
-            body: payload,
-          });
-        } else if ((payload as any)?.file instanceof File) {
-          const fd = new FormData();
-          fd.append('resume', (payload as any).file);
-          await this._fetch(`/students/${encodeURIComponent(studentId)}/resume`, {
-            method: 'PATCH',
-            body: fd,
-          });
+          form = payload;
+        } else {
+          form = new FormData();
+          form.append('resume', file as File);
         }
-      } catch (uploadErr) {
-        console.warn('[api.student.uploadResume] Binary resume upload non-fatal warning:', uploadErr);
+        const res = await this._fetch<{ data: { resume: ParsedResume | null } }>(`/students/${id}/resume`, {
+          method: 'PATCH',
+          body: form,
+        });
+        resume = res?.data?.resume ?? null;
+      } else if ('resumeText' in payload) {
+        const res = await this._fetch<{ data: { resume: ParsedResume | null } }>(`/students/${id}/resume/text`, {
+          method: 'POST',
+          body: JSON.stringify({ text: payload.resumeText }),
+        });
+        resume = res?.data?.resume ?? null;
+      } else {
+        // Resume details edited by the student
+        const res = await this._fetch<{ data: { resume: ParsedResume } }>(`/students/${id}/resume-data`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        resume = res?.data?.resume ?? (payload as ParsedResume);
       }
-
-      // 2. Persist parsed JSON structure into org.students.resume_data
-      await this._fetch(`/students/${encodeURIComponent(studentId)}/resume-data`, {
-        method: 'POST',
-        body: JSON.stringify(parsed),
-      });
-
-      return parsed;
+      if (!resume) {
+        throw new Error('No text could be read from this resume. Try pasting the resume text instead.');
+      }
+      return resume;
     }
   };
 
@@ -1779,47 +1766,55 @@ class ApiClient {
         description: p.description || '',
       }));
 
-      // 1. Try real live WebSocket-backed interview session (/interview/sessions)
-      try {
-        const res = await this._fetch<any>('/interview/sessions', {
-          method: 'POST',
-          body: JSON.stringify({
-            sessionType: type,
-            topic: customTopic,
-            ...(skills.length || projects.length ? { resume: { skills: skills.slice(0, 40), projects: projects.slice(0, 10) } } : {})
-          }),
-        });
-        const session = res?.data || res?.session || res;
-        const question = res?.firstQuestion || session?.firstQuestion || session?.currentQuestion;
-        if (session?.sessionId && question) {
-          const firstQ: QuestionTurn = {
-            id: question.id || question.questionId || `live_q_1_${Date.now()}`,
-            questionNumber: question.questionNumber || question.sequenceNo || 1,
-            questionText: question.questionText || question.question_text,
-            difficulty: question.difficulty || 'EASY',
-            category: question.category || customTopic
-          };
-          const sess = {
-            sessionId: session.sessionId,
-            type,
-            topic: customTopic,
-            turnIndex: 0,
-            questions: [firstQ],
-            tabSwitches: 0
-          };
-          this.setStorage(`interview_${session.sessionId}`, sess);
-          return {
-            sessionId: session.sessionId,
-            firstQuestion: firstQ,
-            maxTurns: session.maxTurns || 15,
-            coinsRemaining: session.coinsRemaining
-          };
-        }
-      } catch (err) {
-        console.warn('[api.interview.start] /interview/sessions fallback:', err);
+      if (type !== 'MOCK_INTERVIEW') {
+        return this.interview.startPracticeSession(studentId, type, customTopic);
       }
 
-      // 2. Fallback to /interview/start endpoint
+      // Live, WebSocket-backed interview: the server grounds questions in the resume it
+      // parsed and in the candidate's answers. A failure is reported, never replaced by
+      // canned questions.
+      const res = await this._fetch<any>('/interview/sessions', {
+        method: 'POST',
+        body: JSON.stringify({
+          sessionType: type,
+          topic: customTopic,
+          ...(skills.length || projects.length ? { resume: { skills: skills.slice(0, 40), projects: projects.slice(0, 10) } } : {})
+        }),
+      });
+      const session = res?.data || res?.session || res;
+      const question = res?.firstQuestion || session?.firstQuestion || session?.currentQuestion;
+      if (!session?.sessionId || !question) {
+        throw new Error('The interview could not be started. Please try again.');
+      }
+      const firstQ: QuestionTurn = {
+        id: question.id || question.questionId || `live_q_1_${Date.now()}`,
+        questionNumber: question.questionNumber || question.sequenceNo || 1,
+        questionText: question.questionText || question.question_text,
+        difficulty: question.difficulty || 'EASY',
+        category: question.category || customTopic
+      };
+      this.setStorage(`interview_${session.sessionId}`, {
+        sessionId: session.sessionId,
+        type,
+        topic: customTopic,
+        turnIndex: 0,
+        questions: [firstQ],
+        tabSwitches: 0
+      });
+      return {
+        sessionId: session.sessionId,
+        firstQuestion: firstQ,
+        maxTurns: session.maxTurns || 15,
+        coinsRemaining: session.coinsRemaining
+      };
+    },
+
+    // Listening and practice sessions (not the live mock interview): unchanged flow
+    startPracticeSession: async (
+      studentId: string,
+      type: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION' | 'PRACTICE',
+      customTopic?: string
+    ): Promise<{ sessionId: string; firstQuestion: QuestionTurn; maxTurns?: number; coinsRemaining?: number }> => {
       try {
         const res = await this._fetch<{ data: { sessionId: string; firstQuestion: QuestionTurn } }>('/interview/start', {
           method: 'POST',
@@ -1845,7 +1840,7 @@ class ApiClient {
         console.warn('[api.interview.start] Real backend start fallback:', err);
       }
 
-      // 3. Dynamic fallback based on real student profile and topic
+      // Dynamic fallback based on real student profile and topic
       const student = await this.student.getProfile(studentId);
       const dynamicTurns = generateDynamicQuestions(student, customTopic);
       const firstQ = dynamicTurns[0];

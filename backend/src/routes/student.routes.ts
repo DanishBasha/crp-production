@@ -12,6 +12,7 @@ import { authenticate, AuthRequest } from '../middleware/authenticate';
 import { requireRole, requireStudentSelfOrStaff } from '../middleware/authorize';
 import { env } from '../config/env';
 import axios from 'axios';
+import { parseResume, saveResumeVersion, getCurrentResume, ParsedResumeData } from '../services/resumeService';
 
 export const studentRouter = Router();
 
@@ -216,6 +217,40 @@ studentRouter.patch(
   }
 );
 
+// ── Resume: stored file + server-side reading ────────────────────────────────
+// The AI service extracts the text (PDF, DOCX, TXT) and keeps only facts written in the
+// resume (skills, projects, experience, education...). The parsed resume is stored as a
+// version in org.resumes — which the mock interview reads to ground its questions — and
+// copied to org.students.resume_data, which the profile endpoints return.
+
+const RESUME_TYPES: Record<string, { ext: string; mime: string }> = {
+  '.pdf': { ext: 'pdf', mime: 'application/pdf' },
+  '.docx': { ext: 'docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+  '.txt': { ext: 'txt', mime: 'text/plain' },
+};
+
+// The student whose resume this request changes; a student may only change their own
+async function resolveResumeStudent(req: AuthRequest): Promise<{ id: string; userId: string }> {
+  const user = req.user!;
+  const raw = paramStr(req.params.studentId);
+  let student = await fetchStudentProfile(raw === 'me' ? user.id : raw);
+  if (!student && user?.id) student = await fetchStudentProfile(user.id);
+  if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
+  if (user.role === 'STUDENT' && student.userId !== user.id) throw new AppError(403, 'Access denied', 'FORBIDDEN');
+  return student;
+}
+
+async function syncResumeData(studentId: string, userId: string, resume: unknown): Promise<void> {
+  await db.query(
+    `UPDATE org.students SET resume_data = $1, updated_at = now() WHERE id = $2`,
+    [JSON.stringify(resume), studentId]
+  );
+  await db.query(
+    `UPDATE candidate.independent_candidates SET resume_data = $1, updated_at = now() WHERE user_id = $2`,
+    [JSON.stringify(resume), userId]
+  ).catch(() => {});
+}
+
 // ── PATCH /api/students/:studentId/resume ─────────────────────────────────────
 
 studentRouter.patch(
@@ -223,54 +258,73 @@ studentRouter.patch(
   upload.single('resume'),
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-      const studentId = paramStr(req.params.studentId);
-      const user = req.user!;
-      const targetId = studentId === 'me' ? user.id : studentId;
-
-      let student = await fetchStudentProfile(targetId);
-      if (!student && user?.id) {
-        student = await fetchStudentProfile(user.id);
-      }
-      if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
-
+      const student = await resolveResumeStudent(req);
       if (!req.file) throw new AppError(422, 'Resume file required', 'FILE_REQUIRED');
+      const extension = (req.file.originalname.match(/\.[a-z0-9]+$/i)?.[0] ?? '').toLowerCase();
+      const type = RESUME_TYPES[extension];
+      if (!type) {
+        throw new AppError(422, 'Upload a PDF, DOCX or TXT file, or paste your resume text.', 'INVALID_FILE_TYPE');
+      }
 
-      const filename = `resumes/${randomUUID()}_${req.file.originalname || 'resume.pdf'}`;
-      const resumeUrl = await storage.upload(req.file.buffer, filename, req.file.mimetype || 'application/pdf');
+      // Read it first: an unreadable file (e.g. a scanned image) is rejected with a clear reason
+      const parsed = await parseResume({ fileName: req.file.originalname, buffer: req.file.buffer });
 
-      const { rows } = await db.query(
-        `UPDATE org.students
-         SET resume_url = $1, resume_verified = false, updated_at = now()
-         WHERE id = $2 RETURNING resume_url`,
+      const resumeUrl = await storage.upload(req.file.buffer, `resumes/${randomUUID()}.${type.ext}`, type.mime);
+      await db.query(
+        `UPDATE org.students SET resume_url = $1, resume_verified = false, updated_at = now() WHERE id = $2`,
         [resumeUrl, student.id]
       );
-
       await db.query(
-        `UPDATE candidate.independent_candidates
-         SET resume_url = $1, updated_at = now()
-         WHERE user_id = $2 OR id = $2`,
-        [resumeUrl, user.id]
+        `UPDATE candidate.independent_candidates SET resume_url = $1, updated_at = now() WHERE user_id = $2`,
+        [resumeUrl, student.userId]
       ).catch(() => {});
 
-      // Record in org.resumes
-      await db.query(
-        `UPDATE org.resumes SET is_current = false WHERE student_id = $1`,
-        [student.id]
-      ).catch(() => {});
-      await db.query(
-        `INSERT INTO org.resumes (student_id, file_name, file_url, is_current)
-         VALUES ($1, $2, $3, true)`,
-        [student.id, req.file.originalname || 'resume.pdf', resumeUrl]
-      ).catch(() => {});
+      const version = await saveResumeVersion(student.id, {
+        objectKey: resumeUrl,
+        fileName: req.file.originalname,
+        text: parsed.text,
+        data: parsed.data,
+      });
+      const current = await getCurrentResume(student.id);
+      await syncResumeData(student.id, student.userId, current?.view ?? null);
 
-      sendSuccess(res, { resumeUrl: rows[0]?.resume_url || resumeUrl });
+      sendSuccess(res, { resumeUrl, fileName: req.file.originalname, version, resume: current?.view ?? null });
     } catch (err) {
       sendError(res, err);
     }
   }
 );
 
-// ── POST /api/students/parse-resume (Uses Groq AI Service) ───────────────────
+// ── POST /api/students/:studentId/resume/text — pasted resume text ────────────
+
+const resumeTextSchema = z.object({ text: z.string().trim().min(50).max(30_000) });
+
+studentRouter.post(
+  '/:studentId/resume/text',
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const student = await resolveResumeStudent(req);
+      const body = resumeTextSchema.safeParse(req.body);
+      if (!body.success) {
+        throw new AppError(422, 'Paste at least 50 characters of your resume.', 'VALIDATION_ERROR');
+      }
+      const parsed = await parseResume({ fileName: 'Pasted resume', text: body.data.text });
+      const version = await saveResumeVersion(student.id, {
+        objectKey: null,
+        fileName: 'Pasted resume',
+        text: parsed.text,
+        data: parsed.data,
+      });
+      const current = await getCurrentResume(student.id);
+      await syncResumeData(student.id, student.userId, current?.view ?? null);
+      sendSuccess(res, { version, resume: current?.view ?? null }, 201);
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+);
+
+// ── POST /api/students/parse-resume — read resume text without saving it ──────
 studentRouter.post(
   '/parse-resume',
   authenticate,
@@ -280,44 +334,12 @@ studentRouter.post(
       if (!resumeText || typeof resumeText !== 'string') {
         throw new AppError(422, 'Resume text is required', 'VALIDATION_ERROR');
       }
-
-      const aiServiceUrl = (process.env.AI_SERVICE_URL || 'http://ai-service:8000').replace(/\/+$/, '');
-      try {
-        const response = await fetch(`${aiServiceUrl}/ai/parse-resume`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ resumeText }),
-        });
-
-        if (response.ok) {
-          const aiJson = (await response.json()) as any;
-          if (aiJson?.data) {
-            sendSuccess(res, {
-              fileName: fileName || 'Uploaded_Resume.pdf',
-              parsedAt: new Date().toISOString(),
-              summary: aiJson.data.summary || 'Technical candidate profile',
-              skills: {
-                languages: aiJson.data.skills?.languages || [],
-                frameworks: aiJson.data.skills?.frameworks || [],
-                databases: aiJson.data.skills?.databases || [],
-                tools: aiJson.data.skills?.tools || [],
-              },
-              projects: aiJson.data.projects || [],
-            });
-            return;
-          }
-        }
-      } catch (aiErr) {
-        console.warn('[student.routes] AI resume parsing fallback:', aiErr);
-      }
-
-      // Safe fallback if AI service is temporarily offline
+      // No made-up fallback: when the reader is unavailable the caller gets an error
+      const parsed = await parseResume({ fileName: fileName || 'Uploaded resume', text: resumeText });
       sendSuccess(res, {
-        fileName: fileName || 'Uploaded_Resume.pdf',
-        parsedAt: new Date().toISOString(),
-        summary: 'Resume parsed via fallback',
-        skills: { languages: ['Python', 'Java', 'JavaScript'], frameworks: ['React', 'Node.js'], databases: ['SQL'], tools: ['Git'] },
-        projects: [{ title: 'Capstone Project', techStack: ['Core Stack'], description: 'Primary engineering project' }],
+        fileName: fileName || 'Uploaded resume',
+        parsedAt: new Date().toISOString().split('T')[0],
+        ...parsed.data,
       });
     } catch (err) {
       sendError(res, err);
@@ -500,40 +522,24 @@ studentRouter.post(
   authenticate,
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-      const studentId = paramStr(req.params.studentId);
       const parsedResume = req.body;
-      const targetId = studentId === 'me' ? req.user!.id : studentId;
-      let student = await fetchStudentProfile(targetId);
-      if (!student && req.user?.id) {
-        student = await fetchStudentProfile(req.user.id);
+      if (!parsedResume || typeof parsedResume !== 'object' || Array.isArray(parsedResume)) {
+        throw new AppError(422, 'Resume details required', 'VALIDATION_ERROR');
       }
-      if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
+      const student = await resolveResumeStudent(req);
 
-      await db.query(
-        `UPDATE org.students SET resume_data = $1, updated_at = now() WHERE id = $2`,
-        [JSON.stringify(parsedResume), student.id]
-      );
+      // Edited resume details become a new version; the text read from the file is kept
+      const previous = await getCurrentResume(student.id);
+      await saveResumeVersion(student.id, {
+        objectKey: null,
+        fileName: String(parsedResume.fileName || parsedResume.file_name || previous?.view.fileName || 'Resume'),
+        text: previous?.text ?? '',
+        data: parsedResume as ParsedResumeData,
+      });
+      const current = await getCurrentResume(student.id);
+      await syncResumeData(student.id, student.userId, current?.view ?? parsedResume);
 
-      await db.query(
-        `UPDATE candidate.independent_candidates SET resume_data = $1, updated_at = now() WHERE user_id = $2 OR id = $2`,
-        [JSON.stringify(parsedResume), req.user!.id]
-      ).catch(() => {});
-
-      // Sync org.resumes so any other query sees the updated resume
-      const rawText = parsedResume.raw_text || parsedResume.summary || (Array.isArray(parsedResume.skills) ? parsedResume.skills.join(', ') : '');
-      const fileName = parsedResume.file_name || parsedResume.fileName || 'resume.pdf';
-      const fileUrl = parsedResume.file_url || parsedResume.fileUrl || null;
-      await db.query(
-        `UPDATE org.resumes SET is_current = false WHERE student_id = $1`,
-        [student.id]
-      ).catch(() => {});
-      await db.query(
-        `INSERT INTO org.resumes (student_id, parsed_data, is_current, raw_text, file_name, file_url)
-         VALUES ($1, $2, true, $3, $4, $5)`,
-        [student.id, JSON.stringify(parsedResume), rawText, fileName, fileUrl]
-      ).catch(() => {});
-
-      sendSuccess(res, { resume: parsedResume });
+      sendSuccess(res, { resume: current?.view ?? parsedResume });
     } catch (err) {
       sendError(res, err);
     }
