@@ -18,6 +18,7 @@ interface DeepgramSession {
   meta: AudioStartMeta;
   pendingChunks: Buffer[]; // audio buffered before socket opens
   isOpen: boolean;
+  keepAliveTimer?: NodeJS.Timeout;
 }
 
 const sessions = new Map<string, DeepgramSession>();
@@ -32,6 +33,7 @@ export async function openSession(
   // Close any stale session first
   const existing = sessions.get(sessionId);
   if (existing) {
+    if (existing.keepAliveTimer) clearInterval(existing.keepAliveTimer);
     try { existing.socket.send(JSON.stringify({ type: 'CloseStream' })); } catch {}
     sessions.delete(sessionId);
   }
@@ -68,6 +70,17 @@ export async function openSession(
   socket.on('open', () => {
     session.isOpen = true;
     console.log(`[Deepgram] session opened  session=${sessionId}`);
+
+    // Send periodic keepalive payload every 4 seconds so Deepgram never times out during pauses/thinking
+    if (session.keepAliveTimer) clearInterval(session.keepAliveTimer);
+    session.keepAliveTimer = setInterval(() => {
+      if (session.isOpen) {
+        try {
+          session.socket.sendJson({ type: 'KeepAlive' });
+        } catch {}
+      }
+    }, 4000);
+
     // Flush any audio chunks that arrived before the socket opened
     for (const chunk of session.pendingChunks) {
       try { socket.sendMedia(chunk); } catch {}
@@ -101,9 +114,13 @@ export async function openSession(
     console.error(`[Deepgram] error  session=${sessionId}:`, err);
   });
 
-  socket.on('close', () => {
-    sessions.delete(sessionId);
-    console.log(`[Deepgram] session closed  session=${sessionId}`);
+  socket.on('close', (event: any) => {
+    session.isOpen = false;
+    if (session.keepAliveTimer) {
+      clearInterval(session.keepAliveTimer);
+      session.keepAliveTimer = undefined;
+    }
+    console.log(`[Deepgram] session closed  session=${sessionId} code=${event?.code} reason=${event?.reason || ''}`);
   });
 
   // Must call connect() after registering handlers — SDK returns a start-closed socket
@@ -129,6 +146,10 @@ export function sendAudio(sessionId: string, audio: Buffer): void {
 export function closeSession(sessionId: string): string {
   const session = sessions.get(sessionId);
   if (!session) return '';
+  if (session.keepAliveTimer) {
+    clearInterval(session.keepAliveTimer);
+    session.keepAliveTimer = undefined;
+  }
   try {
     session.socket.send(JSON.stringify({ type: 'CloseStream' }));
   } catch {}

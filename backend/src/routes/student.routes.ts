@@ -717,12 +717,12 @@ studentRouter.patch(
         [nextCoins, student.user_id]
       ).catch(() => {});
 
-      // 3. Update credit.credit_accounts
+      // 3. Update credit.credit_accounts (1 coin = 10 credits)
       await db.query(
         `INSERT INTO credit.credit_accounts (student_id, balance)
          VALUES ($1, $2)
          ON CONFLICT (student_id) DO UPDATE SET balance = EXCLUDED.balance, updated_at = now()`,
-        [studentId, nextCoins]
+        [studentId, nextCoins * 10]
       ).catch(() => {});
 
       sendSuccess(res, {

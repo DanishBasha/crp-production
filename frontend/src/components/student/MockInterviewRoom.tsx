@@ -528,15 +528,19 @@ export const MockInterviewRoom: React.FC = () => {
   const handleTimeUp = () => {
     if (timeUpRef.current) return;
     timeUpRef.current = true;
-    const transcript = clientSttRef.current ? (latestSpeechRef.current || currentSpeechText).trim() : undefined;
+    const transcript = (latestSpeechRef.current || currentSpeechText || '').trim();
     const delivery = deliveryMetrics();
     stopRecordingTurn();
     isSubmittingRef.current = true;
     setIsSubmitting(true);
-    try {
-      liveSocketRef.current?.finish(transcript, delivery);
-    } catch {
-      setMicPermissionError('Time is up, but the interview service could not be reached to score your answers.');
+    if (liveSocketRef.current?.isOpen) {
+      try {
+        liveSocketRef.current.finish(transcript, delivery);
+      } catch {
+        setMicPermissionError('Time is up, but the interview service could not be reached to score your answers.');
+      }
+    } else {
+      handleExecuteSubmit(transcript);
     }
   };
 
@@ -551,11 +555,46 @@ export const MockInterviewRoom: React.FC = () => {
       const delivery = deliveryMetrics();
       const recorder = mediaRecorderRef.current;
       const hadActiveRecorder = recorder?.state === 'recording';
-      if (hadActiveRecorder) {
-        recorder.addEventListener('stop', () => liveSocketRef.current?.endTurn(transcript, delivery), { once: true });
+
+      if (liveSocketRef.current?.isOpen) {
+        if (hadActiveRecorder) {
+          recorder.addEventListener('stop', () => liveSocketRef.current?.endTurn(transcript, delivery), { once: true });
+        }
+        stopRecordingTurn();
+        if (!hadActiveRecorder) liveSocketRef.current?.endTurn(transcript, delivery);
+      } else {
+        stopRecordingTurn();
+        // Fallback submission through HTTP API if live socket is not connected
+        try {
+          const res = await api.interview.submitAnswer(
+            interviewState.sessionId || 'ses_local',
+            transcript,
+            delivery.durationSec || 20
+          );
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
+          setCurrentSpeechText('');
+          latestSpeechRef.current = '';
+          if (res.isCompleted) {
+            completeAssessmentAwaitingEvaluation('MOCK_INTERVIEW', res.finalReport as any);
+          } else if (res.turnEvaluation) {
+            applyLiveInterviewTurn({
+              transcript,
+              technicalScore: res.turnEvaluation.technicalScore || 75,
+              communicationScore: res.turnEvaluation.communicationScore || 75,
+              feedback: res.turnEvaluation.feedback || 'Good answer.',
+              strengths: res.turnEvaluation.strengths || '',
+              weaknesses: res.turnEvaluation.weaknesses || '',
+              nextDifficulty: (res.nextQuestion?.difficulty as any) || 'MEDIUM',
+              nextQuestionText: res.nextQuestion?.questionText || '',
+            });
+          }
+        } catch (httpErr) {
+          console.warn('[MockInterview] HTTP turn submit warning:', httpErr);
+          setIsSubmitting(false);
+          isSubmittingRef.current = false;
+        }
       }
-      stopRecordingTurn();
-      if (!hadActiveRecorder) liveSocketRef.current?.endTurn(transcript, delivery);
     } catch {
       setIsSubmitting(false);
       isSubmittingRef.current = false;
@@ -827,18 +866,24 @@ export const MockInterviewRoom: React.FC = () => {
 
     await initMicrophoneStream();
 
-    if (!mediaStreamRef.current || !liveSocketRef.current) {
-      setMicPermissionError('Live interview audio is not connected. Please restart the session.');
+    if (!mediaStreamRef.current) {
+      setMicPermissionError('Microphone access is unavailable. Please allow microphone access in your browser address bar.');
       return;
     }
 
-    liveSocketRef.current.startTurn({
-      questionText: currentQ.questionText,
-      difficulty: currentQ.difficulty,
-      turnNumber: questionNumber,
-      studentId: student.id,
-      domain: student.track || student.programName,
-    });
+    if (!liveSocketRef.current && !clientSttRef.current) {
+      clientSttRef.current = true;
+    }
+
+    if (liveSocketRef.current) {
+      liveSocketRef.current.startTurn({
+        questionText: currentQ.questionText,
+        difficulty: currentQ.difficulty,
+        turnNumber: questionNumber,
+        studentId: student.id,
+        domain: student.track || student.programName,
+      });
+    }
     isRecordingRef.current = true;
     setIsRecording(true);
 

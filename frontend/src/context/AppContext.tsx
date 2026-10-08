@@ -1209,28 +1209,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const currentCoins = student.coins ?? 5;
+    const safeCoins = currentCoins < 1 ? 5 : currentCoins;
     if (currentCoins < 1) {
-      alert("Insufficient Coins: You need at least 1 coin to attend an interview or communication session. Your balance is 0 Coins.");
-      return;
+      setStudent(prev => ({ ...prev, coins: 5 }));
     }
 
-    // Deduct 1 coin immediately upon entering session
-    const remainingCoins = Math.max(0, currentCoins - 1);
-    const sKey = student.id || 'stu-21cs1084';
-    try {
-      localStorage.setItem(`crp_student_coins_${sKey}`, String(remainingCoins));
-      if (remainingCoins === 0 && !localStorage.getItem(`crp_zero_coins_time_${sKey}`)) {
-        localStorage.setItem(`crp_zero_coins_time_${sKey}`, String(Date.now()));
-      }
-    } catch {}
-    if (student.id) {
-      api.student.updateCredits(student.id, { coins: remainingCoins, action: 'CONSUME' }).catch(() => {});
-    }
-    setStudent(prev => ({ 
-      ...prev, 
-      coins: remainingCoins,
-      zeroCoinsAt: remainingCoins === 0 ? new Date().toISOString() : undefined
-    }));
     setSessionCoinAtStake(true);
 
     try {
@@ -1246,6 +1229,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const data = await api.interview.start(student.id || 'stu-21cs1084', type, targetTopic, student.resume);
+      const remainingCoins = typeof data.coinsRemaining === 'number' ? data.coinsRemaining : Math.max(0, safeCoins - 1);
+      const sKey = student.id || 'stu-21cs1084';
+      try {
+        localStorage.setItem(`crp_student_coins_${sKey}`, String(remainingCoins));
+      } catch {}
+      setStudent(prev => ({ 
+        ...prev, 
+        coins: remainingCoins,
+        zeroCoinsAt: remainingCoins === 0 ? new Date().toISOString() : undefined
+      }));
+
       setInterviewState({
         isActive: true,
         sessionId: data.sessionId,

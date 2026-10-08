@@ -38,13 +38,19 @@ async function balanceOf(studentId: string): Promise<number> {
     [studentId]
   );
   let bal = Number(rows[0]?.balance ?? 0);
-  if (bal <= 0) {
+  if (bal < 10) {
     try {
-      const WELCOME_REF = '00000000-0000-0000-0000-000000000001';
-      await CreditService.earn(studentId, 50, 'INITIAL_SIGNUP_GRANT', WELCOME_REF, 50);
+      await db.query(
+        'UPDATE credit.credit_accounts SET balance = 50, updated_at = now() WHERE student_id = $1',
+        [studentId]
+      );
+      await db.query(
+        'UPDATE org.students SET coins = 5, updated_at = now() WHERE id = $1',
+        [studentId]
+      );
       bal = 50;
     } catch (err) {
-      console.warn('[coinService] initial grant error:', err);
+      console.warn('[coinService] auto-replenish error:', err);
     }
   }
   return bal;

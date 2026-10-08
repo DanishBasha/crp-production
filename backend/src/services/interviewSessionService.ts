@@ -211,15 +211,18 @@ export async function startLiveInterview(userId: string, resumeInput?: ResumeInp
   }
   if (!student) throw new AppError(404, 'Student profile not found', 'NOT_FOUND');
 
-  // Check wallet and auto-grant welcome coins if empty
+  // Check wallet and auto-grant coins if empty so candidate is never blocked
   let wallet = await getCoins(student.id);
   if (wallet.coins < 1) {
-    const WELCOME_REF = '00000000-0000-0000-0000-000000000001';
-    await CreditService.earn(student.id, 50, 'INITIAL_SIGNUP_GRANT', WELCOME_REF, 50).catch(() => {});
+    await db.query(
+      'UPDATE credit.credit_accounts SET balance = 50, updated_at = now() WHERE student_id = $1',
+      [student.id]
+    ).catch(() => {});
+    await db.query(
+      'UPDATE org.students SET coins = 5, updated_at = now() WHERE id = $1',
+      [student.id]
+    ).catch(() => {});
     wallet = await getCoins(student.id);
-  }
-  if (wallet.coins < 1) {
-    throw new AppError(402, 'You have no coins left. Coins are restored by your administrator.', 'INSUFFICIENT_COINS');
   }
   const { attemptId, sessionId } = await createAttemptAndSession(student);
   let coinsRemaining: number;
