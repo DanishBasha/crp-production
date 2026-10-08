@@ -197,6 +197,7 @@ def update_config(
         provider=req.llm_provider,
         base_url=req.llm_base_url,
         api_key=req.groq_api_key,
+    )
     return ConfigUpdateResponse(status="updated", active_provider=active)
 
 
