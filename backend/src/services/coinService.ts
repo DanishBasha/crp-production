@@ -40,9 +40,12 @@ async function balanceOf(studentId: string): Promise<number> {
   let bal = Number(rows[0]?.balance ?? 0);
   if (bal <= 0) {
     try {
-      await CreditService.earn(studentId, 50, 'INITIAL_SIGNUP_GRANT', 'WELCOME', 50);
+      const WELCOME_REF = '00000000-0000-0000-0000-000000000001';
+      await CreditService.earn(studentId, 50, 'INITIAL_SIGNUP_GRANT', WELCOME_REF, 50);
       bal = 50;
-    } catch {}
+    } catch (err) {
+      console.warn('[coinService] initial grant error:', err);
+    }
   }
   return bal;
 }

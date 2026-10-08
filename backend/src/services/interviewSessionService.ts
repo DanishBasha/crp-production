@@ -16,6 +16,7 @@ import { Events, AttemptCompletedPayload } from '../shared/events/events';
 import { sessionContextService, InterviewState, InterviewResume } from './sessionContextService';
 import type { InterviewReport } from './interviewReport';
 import { getCoins, spendCoin, refundCoin } from './coinService';
+import { CreditService } from '../modules/credits/credits.service';
 
 export const FIRST_QUESTION =
   "Tell me about yourself. Walk me through your background, the key skills you've built, and what you've been working on most recently.";
@@ -210,8 +211,14 @@ export async function startLiveInterview(userId: string, resumeInput?: ResumeInp
   }
   if (!student) throw new AppError(404, 'Student profile not found', 'NOT_FOUND');
 
-  // Fail fast before creating anything when the wallet is empty
-  if ((await getCoins(student.id)).coins < 1) {
+  // Check wallet and auto-grant welcome coins if empty
+  let wallet = await getCoins(student.id);
+  if (wallet.coins < 1) {
+    const WELCOME_REF = '00000000-0000-0000-0000-000000000001';
+    await CreditService.earn(student.id, 50, 'INITIAL_SIGNUP_GRANT', WELCOME_REF, 50).catch(() => {});
+    wallet = await getCoins(student.id);
+  }
+  if (wallet.coins < 1) {
     throw new AppError(402, 'You have no coins left. Coins are restored by your administrator.', 'INSUFFICIENT_COINS');
   }
   const { attemptId, sessionId } = await createAttemptAndSession(student);

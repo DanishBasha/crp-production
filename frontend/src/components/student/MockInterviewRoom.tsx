@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { VoiceOrb } from './VoiceOrb';
 import { QuestionTurn } from '../../types';
+import { api } from '../../services/api';
 import { 
   AudioRecorder, 
   transcribeWithWhisper, 
@@ -1018,17 +1019,50 @@ export const MockInterviewRoom: React.FC = () => {
       requestFullscreen();
       setDrawerOpen(false);
       await initMicrophoneStream();
-      const socket = new LiveInterviewSocket(interviewState.sessionId || '', localStorage.getItem('auth_token'));
-      await socket.connect();
-      liveSocketRef.current = socket;
-      clientSttRef.current = socket.sttMode === 'client';
-      const browserCanTranscribe = Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
-      if (clientSttRef.current && !browserCanTranscribe) {
-        socket.close();
-        liveSocketRef.current = null;
-        throw new Error('This browser cannot transcribe speech. Please open the interview in Google Chrome or Microsoft Edge.');
+      
+      let activeSessionId = interviewState.sessionId;
+      const isUuid = (id?: string): id is string => Boolean(id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+
+      // 1. If we don't have a valid backend UUID session yet, create one now:
+      if (!isUuid(activeSessionId)) {
+        try {
+          const liveData = await api.interview.start(
+            student.id || 'stu-21cs1084',
+            interviewState.type || 'MOCK_INTERVIEW',
+            activeAssignment?.domainOrTopic || 'Personal Resume & Projects',
+            student.resume
+          );
+          if (liveData?.sessionId && isUuid(liveData.sessionId)) {
+            activeSessionId = liveData.sessionId;
+          }
+        } catch (initErr) {
+          console.warn('[MockInterviewRoom] Live session creation retry warning:', initErr);
+        }
       }
-      socket.onMessage(message => liveHandlerRef.current(message));
+
+      // 2. Connect to live WebSocket if a valid session ID exists
+      if (isUuid(activeSessionId)) {
+        try {
+          const socket = new LiveInterviewSocket(activeSessionId, localStorage.getItem('auth_token'));
+          await socket.connect();
+          liveSocketRef.current = socket;
+          clientSttRef.current = socket.sttMode === 'client';
+          const browserCanTranscribe = Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+          if (clientSttRef.current && !browserCanTranscribe) {
+            socket.close();
+            liveSocketRef.current = null;
+            throw new Error('This browser cannot transcribe speech. Please open the interview in Google Chrome or Microsoft Edge.');
+          }
+          socket.onMessage(message => liveHandlerRef.current(message));
+          setHasSessionStarted(true);
+          return;
+        } catch (socketErr) {
+          console.warn('[MockInterviewRoom] Live socket connection failed, falling back to conversational browser mode:', socketErr);
+        }
+      }
+
+      // 3. Fallback: Conversational browser mode so the candidate is never blocked
+      clientSttRef.current = true;
       setHasSessionStarted(true);
     } catch (error) {
       console.error('[MockInterview] Live connection error:', error);
