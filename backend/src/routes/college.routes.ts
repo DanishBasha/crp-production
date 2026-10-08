@@ -863,8 +863,7 @@ collegeRouter.delete(
       // 11. Delete batches of this program
       await safeQuery(`DELETE FROM org.batches WHERE program_id = $1`, [progId]);
 
-      // 12. Delete placement and credit references
-      await safeQuery(`DELETE FROM placement.placement_eligibility WHERE program_id = $1`, [progId]);
+      // 12. Delete credit policies for this program
       await safeQuery(`DELETE FROM credit.credit_policies WHERE program_id = $1`, [progId]);
 
       // 13. Delete users safely
