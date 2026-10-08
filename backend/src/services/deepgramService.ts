@@ -32,7 +32,7 @@ export async function openSession(
   // Close any stale session first
   const existing = sessions.get(sessionId);
   if (existing) {
-    try { existing.socket.sendCloseStream({}); } catch {}
+    try { existing.socket.send(JSON.stringify({ type: 'CloseStream' })); } catch {}
     sessions.delete(sessionId);
   }
 
@@ -50,8 +50,8 @@ export async function openSession(
       model: 'nova-3',
       language: 'en',
       interim_results: ListenV1InterimResults.True,
-      utterance_end_ms: 1000,
-      endpointing: 300,
+      utterance_end_ms: 3000,
+      endpointing: 3000,
       smart_format: ListenV1SmartFormat.True,
       vad_events: ListenV1VadEvents.True,
       filler_words: 'true', // keep "um"/"uh" in transcripts — they are scored (blueprint §4.4)
@@ -86,22 +86,14 @@ export async function openSession(
 
       wsManager.emit(sessionId, {
         type: 'transcript_interim',
-        text: msg.is_final ? session.transcript : words,
+        text: msg.is_final ? session.transcript : (session.transcript ? `${session.transcript} ${words}` : words),
         isFinal: Boolean(msg.is_final),
       });
     } else if (msg?.type === 'UtteranceEnd') {
-      if (session.triggered) return;
-      session.triggered = true;
-
-      // May be empty — the caller decides how to handle a silent turn
-      const finalTranscript = session.transcript.trim();
-      console.log(`[Deepgram] UtteranceEnd  session=${sessionId}  "${finalTranscript.slice(0, 80)}"`);
-
-      try {
-        await onEagerEnd(finalTranscript, meta);
-      } catch (err) {
-        console.error('[Deepgram] onEagerEnd error:', err);
-      }
+      // Natural pause detected by Deepgram: log and preserve transcript.
+      // Do NOT cut off the candidate prematurely; the client silence timer or manual submission finishes the answer.
+      const interim = session.transcript.trim();
+      console.log(`[Deepgram] UtteranceEnd session=${sessionId} len=${interim.length}`);
     }
   });
 
@@ -138,7 +130,7 @@ export function closeSession(sessionId: string): string {
   const session = sessions.get(sessionId);
   if (!session) return '';
   try {
-    session.socket.sendCloseStream({});
+    session.socket.send(JSON.stringify({ type: 'CloseStream' }));
   } catch {}
   sessions.delete(sessionId);
   return session.transcript.trim();

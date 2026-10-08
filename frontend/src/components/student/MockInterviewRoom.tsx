@@ -546,11 +546,8 @@ export const MockInterviewRoom: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      // Closes the current answer; the server evaluates it and replies with
-      // turn_result asynchronously. With browser STT the transcript goes along.
-      const transcript = clientSttRef.current
-        ? (textToSubmit || latestSpeechRef.current || currentSpeechText).trim()
-        : undefined;
+      // Closes the current answer; send highest-fidelity transcript available from browser
+      const transcript = (textToSubmit || latestSpeechRef.current || currentSpeechText || '').trim();
       const delivery = deliveryMetrics();
       const recorder = mediaRecorderRef.current;
       const hadActiveRecorder = recorder?.state === 'recording';
@@ -845,25 +842,26 @@ export const MockInterviewRoom: React.FC = () => {
     isRecordingRef.current = true;
     setIsRecording(true);
 
-    if (clientSttRef.current) {
-      // The server has no speech-to-text configured: transcribe in the browser
-      // and send the transcript with audio_end. No audio is streamed.
-      latestSpeechRef.current = '';
-      accumulatedSpeechRef.current = '';
-      currentSessionFinalRef.current = '';
-      startSpeechRecognition();
-      return;
-    }
+    // 1. Always start browser speech recognition so candidate sees live interim transcription on screen
+    latestSpeechRef.current = '';
+    accumulatedSpeechRef.current = '';
+    currentSessionFinalRef.current = '';
+    startSpeechRecognition();
 
-    // Server-side STT (Deepgram): stream the original audio; transcripts come
-    // back over the socket, so browser STT stays off.
-    const recorder = new MediaRecorder(mediaStreamRef.current);
-    recorder.ondataavailable = event => {
-      if (event.data.size > 0) liveSocketRef.current?.sendAudio(event.data);
-    };
-    recorder.onerror = () => setMicPermissionError('The browser could not capture microphone audio.');
-    recorder.start(250);
-    mediaRecorderRef.current = recorder;
+    // 2. Stream audio chunks over live socket to Deepgram server-side STT
+    if (!clientSttRef.current && mediaStreamRef.current) {
+      try {
+        const recorder = new MediaRecorder(mediaStreamRef.current);
+        recorder.ondataavailable = event => {
+          if (event.data.size > 0) liveSocketRef.current?.sendAudio(event.data);
+        };
+        recorder.onerror = () => console.warn('[MockInterview] MediaRecorder stream warning');
+        recorder.start(250);
+        mediaRecorderRef.current = recorder;
+      } catch (recErr) {
+        console.warn('[MockInterview] MediaRecorder start warning:', recErr);
+      }
+    }
   };
 
   useEffect(() => {

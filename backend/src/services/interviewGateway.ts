@@ -161,10 +161,14 @@ function handleConnection(ws: WebSocket, sessionId: string, token: string | null
       if (current.done) { if (isFinal) await finishInterview(sessionId); return; }
       serverTranscript = deepgramService.closeSession(sessionId);
     }
-    const clientTranscript = typeof message.transcript === 'string' ? message.transcript : '';
+    const clientTranscript = typeof message.transcript === 'string' ? message.transcript.trim() : '';
+    // Use the most comprehensive transcript between Deepgram and browser WebSpeech
+    const chosenTranscript = (serverTranscript.length >= clientTranscript.length ? serverTranscript : clientTranscript) || serverTranscript || clientTranscript;
+    console.log(`[interviewGateway] Final turn transcript len=${chosenTranscript.length}: "${chosenTranscript.slice(0, 100)}"`);
+
     // Delivery measured by the browser: speaking time (→ WPM), long pauses, response latency
     const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
-    await finishTurn(current, serverTranscript || clientTranscript, {
+    await finishTurn(current, chosenTranscript, {
       durationSec: num(message.durationSec),
       pauseCount: num(message.pauseCount),
       longestPauseSec: num(message.longestPauseSec),
