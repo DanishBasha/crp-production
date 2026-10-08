@@ -728,7 +728,22 @@ class ApiClient {
       ? cleanPath
       : `${rawApiUrl.replace(/\/+$/, '')}${cleanPath}`;
 
-    const res = await fetch(url, { ...options, headers });
+    let res: Response;
+    try {
+      res = await fetch(url, { ...options, headers });
+    } catch (netErr: any) {
+      // Automatic retry once after 500ms on transient network disconnect or container reload
+      try {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        res = await fetch(url, { ...options, headers });
+      } catch {
+        const errorMsg = (netErr?.message && !netErr.message.toLowerCase().includes('failed to fetch'))
+          ? netErr.message
+          : 'Unable to reach the server. Please check your network connection or try again in a few moments.';
+        throw new Error(errorMsg);
+      }
+    }
+
     if (!res.ok) {
       if (res.status === 401) {
         this.setToken(null);
@@ -1269,13 +1284,12 @@ class ApiClient {
             status: inv.status,
             createdAt: inv.created_at || inv.createdAt,
             expiresAt: inv.expires_at || inv.expiresAt,
+            alreadyAccepted: Boolean(inv.alreadyAccepted || inv.status === 'ACCEPTED'),
           };
         }
       } catch (err: any) {
         console.warn('Backend getByToken error:', err?.message);
-        if (err?.message && (err.message.includes('expired') || err.message.includes('already accepted') || err.message.includes('ALREADY_USED'))) {
-          throw err;
-        }
+        throw err;
       }
       return null;
     },

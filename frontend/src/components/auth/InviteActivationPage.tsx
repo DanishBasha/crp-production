@@ -252,6 +252,44 @@ export const InviteActivationPage: React.FC = () => {
                   )}
                 </button>
               </div>
+            ) : (inviteDetails.status === 'ACCEPTED' || inviteDetails.alreadyAccepted) ? (
+              <div className="space-y-4">
+                <div className="p-5 bg-blue-50/80 border border-blue-200 rounded-2xl text-blue-950 space-y-3">
+                  <div className="flex items-center space-x-2 text-blue-900 font-bold text-sm">
+                    <CheckCircle2 className="w-5 h-5 text-blue-600" />
+                    <span>Account Already Activated</span>
+                  </div>
+                  <p className="text-xs text-blue-800 leading-relaxed">
+                    This invitation for <strong>{inviteDetails.name}</strong> ({inviteDetails.email}) at <strong>{inviteDetails.collegeName || 'Institution'}</strong> has already been completed and activated.
+                  </p>
+                  <p className="text-[11px] text-blue-700">
+                    Your credentials are fully established. Please proceed to sign in with your email and password.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleBackToSignIn}
+                  className="w-full bg-neutral-900 hover:bg-black text-white text-xs font-bold py-3.5 rounded-xl transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer"
+                >
+                  <span>Sign In to Your Account</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+
+                <div className="text-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInviteDetails(null);
+                      setInviteToken('');
+                      setError(null);
+                    }}
+                    className="text-xs text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer py-1 font-medium"
+                  >
+                    ← Enter a different invitation token
+                  </button>
+                </div>
+              </div>
             ) : (
               /* Verified Invitation Form (Exact match with user requested UI) */
               <form onSubmit={handleCompleteActivation} className="space-y-4">

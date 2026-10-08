@@ -79,6 +79,7 @@ export interface PendingInvite {
   createdAt: string;
   expiresAt?: string;
   status: 'PENDING' | 'ACCEPTED';
+  alreadyAccepted?: boolean;
 }
 
 export type Difficulty = 'EASY' | 'MEDIUM' | 'ADVANCED';
