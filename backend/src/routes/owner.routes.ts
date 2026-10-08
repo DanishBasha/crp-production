@@ -194,8 +194,21 @@ ownerRouter.post(
         [institution.id, email]
       );
       for (const prev of prevAdmins) {
-        await db.query(`DELETE FROM identity.role_assignments WHERE user_id = $1 AND institution_id = $2`, [prev.id, institution.id]);
-        await db.query(`DELETE FROM identity.users WHERE id = $1 AND institution_id = $2`, [prev.id, institution.id]);
+        try {
+          await db.query(`UPDATE system.audit_logs SET actor_user_id = NULL WHERE actor_user_id = $1`, [prev.id]).catch(() => {});
+          await db.query(`UPDATE agent.agent_runs SET triggered_by_user_id = NULL WHERE triggered_by_user_id = $1`, [prev.id]).catch(() => {});
+          await db.query(`DELETE FROM org.student_mentor_assignments WHERE mentor_id = $1 OR assigned_by = $1`, [prev.id]).catch(() => {});
+          await db.query(`DELETE FROM org.trainer_subdivision_assignments WHERE trainer_id = $1 OR assigned_by = $1`, [prev.id]).catch(() => {});
+          await db.query(`DELETE FROM placement.mentor_verifications WHERE mentor_user_id = $1`, [prev.id]).catch(() => {});
+          await db.query(`DELETE FROM identity.role_assignments WHERE user_id = $1`, [prev.id]).catch(() => {});
+          await db.query(`DELETE FROM org.department_staff WHERE user_id = $1`, [prev.id]).catch(() => {});
+          await db.query(
+            `DELETE FROM identity.users WHERE id = $1 AND LOWER(email) != 'danishbasha18@gmail.com' AND role != 'PLATFORM_OWNER'`,
+            [prev.id]
+          ).catch(() => {});
+        } catch (cleanupErr) {
+          console.warn('[owner.routes] Non-fatal cleanup warning for superseded admin:', cleanupErr);
+        }
       }
 
       // Create invitation token

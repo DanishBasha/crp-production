@@ -1653,7 +1653,7 @@ class ApiClient {
 
     uploadResume: async (
       studentId: string, 
-      payload: FormData | { resumeText: string; fileName?: string } | ParsedResume
+      payload: FormData | { resumeText: string; fileName?: string; file?: File } | ParsedResume
     ): Promise<ParsedResume> => {
       let parsed: ParsedResume;
 
@@ -1665,6 +1665,26 @@ class ApiClient {
         parsed = parseResumeContent(rawText, fileName);
       }
 
+      // 1. If a binary File or FormData is available, upload to /resume to store resume_url in Supabase
+      try {
+        if (payload instanceof FormData) {
+          await this._fetch(`/students/${encodeURIComponent(studentId)}/resume`, {
+            method: 'PATCH',
+            body: payload,
+          });
+        } else if ((payload as any)?.file instanceof File) {
+          const fd = new FormData();
+          fd.append('resume', (payload as any).file);
+          await this._fetch(`/students/${encodeURIComponent(studentId)}/resume`, {
+            method: 'PATCH',
+            body: fd,
+          });
+        }
+      } catch (uploadErr) {
+        console.warn('[api.student.uploadResume] Binary resume upload non-fatal warning:', uploadErr);
+      }
+
+      // 2. Persist parsed JSON structure into org.students.resume_data
       await this._fetch(`/students/${encodeURIComponent(studentId)}/resume-data`, {
         method: 'POST',
         body: JSON.stringify(parsed),

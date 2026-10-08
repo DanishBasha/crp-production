@@ -138,23 +138,41 @@ collegeRouter.post(
 
         // Create user if doesn't exist
         const { rows: userRows } = await db.query(
-          `INSERT INTO identity.users (name, email, password_hash, role, status)
-           VALUES ($1, $2, $3, 'DEPARTMENT_ADMIN', 'ACTIVE')
-           ON CONFLICT (email) DO UPDATE SET role = 'DEPARTMENT_ADMIN'
+          `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
+           VALUES ($1, $2, $3, 'DEPARTMENT_ADMIN', 'ACTIVE', $4)
+           ON CONFLICT (email) DO UPDATE SET 
+             role = 'DEPARTMENT_ADMIN',
+             name = EXCLUDED.name,
+             institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
            RETURNING id`,
-          [assignedAdminName || name + ' Admin', assignedAdminEmail, passwordHash]
+          [assignedAdminName || name + ' Admin', assignedAdminEmail.toLowerCase().trim(), passwordHash, collegeId]
         );
 
-        // Create staff record
+        // Create or update staff record
         await db.query(
           `INSERT INTO org.department_staff
            (user_id, institution_id, department_id, department, name, email, designation, status)
-           VALUES ($1, $2, $3, $4, $5, $6, 'Department Admin', 'ACTIVE')`,
-          [userRows[0].id, collegeId, department.id, name, assignedAdminName || name + ' Admin', assignedAdminEmail]
+           VALUES ($1, $2, $3, $4, $5, $6, 'Department Admin', 'ACTIVE')
+           ON CONFLICT (email) DO UPDATE SET
+             user_id = EXCLUDED.user_id,
+             institution_id = EXCLUDED.institution_id,
+             department_id = EXCLUDED.department_id,
+             department = EXCLUDED.department,
+             name = EXCLUDED.name,
+             designation = EXCLUDED.designation,
+             status = 'ACTIVE'`,
+          [userRows[0].id, collegeId, department.id, name, assignedAdminName || name + ' Admin', assignedAdminEmail.toLowerCase().trim()]
         );
 
+        await db.query(
+          `INSERT INTO identity.role_assignments (user_id, role, institution_id, department_id)
+           VALUES ($1, 'DEPARTMENT_ADMIN', $2, $3)
+           ON CONFLICT DO NOTHING`,
+          [userRows[0].id, collegeId, department.id]
+        ).catch(() => {});
+
         sendStaffWelcomeEmail({
-          to: assignedAdminEmail,
+          to: assignedAdminEmail.toLowerCase().trim(),
           name: assignedAdminName || `${name} Admin`,
           role: 'DEPARTMENT_ADMIN',
           password: 'welcome@2026',
@@ -211,6 +229,53 @@ collegeRouter.patch(
            WHERE id = $${paramIndex} AND institution_id = $${paramIndex + 1}`,
           values
         );
+      }
+
+      if (parsed.data.assignedAdminEmail && parsed.data.assignedAdminEmail.trim()) {
+        const passwordHash = await bcrypt.hash('welcome@2026', 10);
+        const resolvedCollegeId = await resolveCollegeId(collegeId);
+        const adminEmail = parsed.data.assignedAdminEmail.toLowerCase().trim();
+        const adminName = parsed.data.assignedAdminName || `${parsed.data.name || 'Department'} Admin`;
+
+        const { rows: userRows } = await db.query(
+          `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
+           VALUES ($1, $2, $3, 'DEPARTMENT_ADMIN', 'ACTIVE', $4)
+           ON CONFLICT (email) DO UPDATE SET 
+             role = 'DEPARTMENT_ADMIN',
+             name = EXCLUDED.name,
+             institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
+           RETURNING id`,
+          [adminName, adminEmail, passwordHash, resolvedCollegeId]
+        );
+
+        await db.query(
+          `INSERT INTO org.department_staff
+           (user_id, institution_id, department_id, department, name, email, designation, status)
+           VALUES ($1, $2, $3, $4, $5, $6, 'Department Admin', 'ACTIVE')
+           ON CONFLICT (email) DO UPDATE SET
+             user_id = EXCLUDED.user_id,
+             institution_id = EXCLUDED.institution_id,
+             department_id = EXCLUDED.department_id,
+             name = EXCLUDED.name,
+             designation = EXCLUDED.designation,
+             status = 'ACTIVE'`,
+          [userRows[0].id, resolvedCollegeId, deptId, parsed.data.name || 'Department', adminName, adminEmail]
+        );
+
+        await db.query(
+          `INSERT INTO identity.role_assignments (user_id, role, institution_id, department_id)
+           VALUES ($1, 'DEPARTMENT_ADMIN', $2, $3)
+           ON CONFLICT DO NOTHING`,
+          [userRows[0].id, resolvedCollegeId, deptId]
+        ).catch(() => {});
+
+        sendStaffWelcomeEmail({
+          to: adminEmail,
+          name: adminName,
+          role: 'DEPARTMENT_ADMIN',
+          password: 'welcome@2026',
+          createdBy: (req as AuthRequest).user?.name || 'Administrator',
+        }).catch((err) => console.error('[college.routes] Failed to send updated dept admin welcome email:', err));
       }
 
       // Fetch updated record
@@ -482,24 +547,27 @@ collegeRouter.post(
       if (assignedAdminEmail) {
         const passwordHash = await bcrypt.hash('welcome@2026', 10);
         const { rows: userRows } = await db.query(
-          `INSERT INTO identity.users (name, email, password_hash, role, status)
-           VALUES ($1, $2, $3, 'PROGRAM_ADMIN', 'ACTIVE')
-           ON CONFLICT (email) DO UPDATE SET role = 'PROGRAM_ADMIN'
+          `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
+           VALUES ($1, $2, $3, 'PROGRAM_ADMIN', 'ACTIVE', $4)
+           ON CONFLICT (email) DO UPDATE SET 
+             role = 'PROGRAM_ADMIN',
+             name = EXCLUDED.name,
+             institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
            RETURNING id`,
-          [assignedAdminName || name + ' Admin', assignedAdminEmail, passwordHash]
+          [assignedAdminName || name + ' Admin', assignedAdminEmail.toLowerCase().trim(), passwordHash, collegeId]
         );
 
         if (userRows[0]) {
           await db.query(
-            `INSERT INTO identity.role_assignments (user_id, role_id, institution_id, program_id, scope_type, is_active)
-             SELECT $1, id, $2, $3, 'PROGRAM', true FROM identity.roles WHERE name = 'PROGRAM_ADMIN'
+            `INSERT INTO identity.role_assignments (user_id, role, institution_id, program_id)
+             VALUES ($1, 'PROGRAM_ADMIN', $2, $3)
              ON CONFLICT DO NOTHING`,
             [userRows[0].id, collegeId, program.id]
           ).catch(() => {});
         }
 
         sendStaffWelcomeEmail({
-          to: assignedAdminEmail,
+          to: assignedAdminEmail.toLowerCase().trim(),
           name: assignedAdminName || `${name} Admin`,
           role: 'PROGRAM_ADMIN',
           password: 'welcome@2026',
@@ -520,8 +588,9 @@ collegeRouter.patch(
   requireSuperAdminOrOwner,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const { progId } = req.params;
+      const { collegeId: rawCollegeId, progId } = req.params;
       const { name, code, targetDepartment, assignedAdminName, assignedAdminEmail, adminPermissions } = req.body;
+      const collegeId = await resolveCollegeId(rawCollegeId);
 
       const updates: string[] = [];
       const values: any[] = [];
@@ -545,7 +614,7 @@ collegeRouter.patch(
       }
       if (assignedAdminEmail !== undefined) {
         updates.push(`assigned_admin_email = $${paramIdx++}`);
-        values.push(assignedAdminEmail);
+        values.push(assignedAdminEmail ? assignedAdminEmail.toLowerCase().trim() : null);
       }
       if (adminPermissions !== undefined) {
         updates.push(`admin_permissions = $${paramIdx++}`);
@@ -558,6 +627,37 @@ collegeRouter.patch(
           `UPDATE org.programs SET ${updates.join(', ')} WHERE id = $${paramIdx}`,
           values
         );
+      }
+
+      if (assignedAdminEmail && assignedAdminEmail.trim()) {
+        const passwordHash = await bcrypt.hash('welcome@2026', 10);
+        const { rows: userRows } = await db.query(
+          `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
+           VALUES ($1, $2, $3, 'PROGRAM_ADMIN', 'ACTIVE', $4)
+           ON CONFLICT (email) DO UPDATE SET 
+             role = 'PROGRAM_ADMIN',
+             name = EXCLUDED.name,
+             institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
+           RETURNING id`,
+          [assignedAdminName || (name || 'Program') + ' Admin', assignedAdminEmail.toLowerCase().trim(), passwordHash, collegeId]
+        );
+
+        if (userRows[0]) {
+          await db.query(
+            `INSERT INTO identity.role_assignments (user_id, role, institution_id, program_id)
+             VALUES ($1, 'PROGRAM_ADMIN', $2, $3)
+             ON CONFLICT DO NOTHING`,
+            [userRows[0].id, collegeId, progId]
+          ).catch(() => {});
+        }
+
+        sendStaffWelcomeEmail({
+          to: assignedAdminEmail.toLowerCase().trim(),
+          name: assignedAdminName || `${name || 'Program'} Admin`,
+          role: 'PROGRAM_ADMIN',
+          password: 'welcome@2026',
+          createdBy: (req as AuthRequest).user?.name || 'Administrator',
+        }).catch((err) => console.error('[college.routes] Failed to send updated program admin welcome email:', err));
       }
 
       const { rows } = await db.query(
@@ -745,11 +845,14 @@ collegeRouter.post(
       // Create user account
       const passwordHash = await bcrypt.hash('welcome@2026', 10);
       const { rows: userRows } = await db.query(
-        `INSERT INTO identity.users (name, email, password_hash, role, status)
-         VALUES ($1, $2, $3, 'COUNSELLOR', 'ACTIVE')
-         ON CONFLICT (email) DO UPDATE SET role = 'COUNSELLOR'
+        `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
+         VALUES ($1, $2, $3, 'COUNSELLOR', 'ACTIVE', $4)
+         ON CONFLICT (email) DO UPDATE SET 
+           role = 'COUNSELLOR',
+           name = EXCLUDED.name,
+           institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
          RETURNING id`,
-        [name, email, passwordHash]
+        [name, email, passwordHash, collegeId]
       );
 
       // Create staff record
@@ -826,11 +929,14 @@ collegeRouter.post(
         try {
           const passwordHash = await bcrypt.hash('welcome@2026', 10);
           const { rows: userRows } = await db.query(
-            `INSERT INTO identity.users (name, email, password_hash, role, status)
-             VALUES ($1, $2, $3, 'COUNSELLOR', 'ACTIVE')
-             ON CONFLICT (email) DO UPDATE SET role = 'COUNSELLOR'
+            `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
+             VALUES ($1, $2, $3, 'COUNSELLOR', 'ACTIVE', $4)
+             ON CONFLICT (email) DO UPDATE SET 
+               role = 'COUNSELLOR',
+               name = EXCLUDED.name,
+               institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
              RETURNING id`,
-            [name, email.toLowerCase(), passwordHash]
+            [name, email.toLowerCase(), passwordHash, collegeId]
           );
 
           const token = `act_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 7)}`;

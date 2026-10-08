@@ -923,18 +923,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     const fetchAssignments = async () => {
-      if (!currentUser || !['SUPER_ADMIN', 'PLATFORM_OWNER', 'PROGRAM_ADMIN', 'DEPARTMENT_ADMIN', 'FACULTY_MENTOR'].includes(currentUser.role)) {
+      if (!currentUser) {
         return;
       }
       try {
-        const list = await api.admin.getAssignments(currentUser?.collegeId);
+        const collegeId = currentUser.collegeId || (student as any)?.collegeId;
+        const list = await api.admin.getAssignments(collegeId);
         setAssignments(list || []);
       } catch (e) {
         console.warn('Failed to load assignments:', e);
       }
     };
     fetchAssignments();
-  }, [currentUser?.collegeId, currentUser?.role]);
+  }, [currentUser?.collegeId, currentUser?.role, student?.id]);
 
   useEffect(() => {
     const fetchTenures = async () => {

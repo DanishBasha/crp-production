@@ -8,9 +8,11 @@ const isRemoteDb =
 
 export const db = new Pool({
   connectionString: env.DATABASE_URL,
-  max: 10,
+  max: 15,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 10_000,
+  connectionTimeoutMillis: 20_000,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
   ssl: isRemoteDb ? { rejectUnauthorized: false } : undefined,
 });
 
@@ -18,5 +20,9 @@ db.on('connect', () => {
   if (env.NODE_ENV === 'development') {
     console.log('[db] pool connected');
   }
+});
+
+db.on('error', (err) => {
+  console.error('[db] Unexpected background client error on pool:', err);
 });
 

@@ -138,47 +138,103 @@ studentBatchRouter.post(
         }
 
         try {
-          // Create user
+          // Create or update user
           const passwordHash = await bcrypt.hash('student123', 10);
           const { rows: userRows } = await db.query(
-            `INSERT INTO identity.users (name, email, password_hash, role, status)
-             VALUES ($1, $2, $3, 'STUDENT', 'ACTIVE')
-             ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
+            `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
+             VALUES ($1, $2, $3, 'STUDENT', 'ACTIVE', $4)
+             ON CONFLICT (email) DO UPDATE SET 
+               name = EXCLUDED.name,
+               institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
              RETURNING id`,
-            [name.trim(), email.toLowerCase().trim(), passwordHash]
+            [name.trim(), email.toLowerCase().trim(), passwordHash, collegeId]
           );
 
-          // Create or update student
-          const { rows: studentRows } = await db.query(
-            `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track, program_name, class_name)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             ON CONFLICT (roll_number) DO UPDATE SET
-               user_id = EXCLUDED.user_id,
-               department = EXCLUDED.department,
-               batch_year = EXCLUDED.batch_year,
-               track = EXCLUDED.track,
-               program_name = EXCLUDED.program_name,
-               class_name = COALESCE(EXCLUDED.class_name, org.students.class_name)
-             RETURNING id, roll_number`,
-            [
-              userRows[0].id,
-              programId,
-              batchId,
-              rollNumber.trim().toUpperCase(),
-              department || 'Computer Science & Engineering',
-              batchYear,
-              programName || department || 'General Track',
-              programName || null,
-              className || null
-            ]
+          // Safe check to avoid partial index ON CONFLICT failure
+          const { rows: existingStudents } = await db.query(
+            `SELECT id FROM org.students 
+             WHERE user_id = $1 OR (roll_number IS NOT NULL AND roll_number = $2) 
+             LIMIT 1`,
+            [userRows[0].id, rollNumber.trim().toUpperCase()]
           );
+
+          let studentId: string;
+          let finalRoll: string;
+
+          if (existingStudents.length > 0) {
+            const { rows: updatedStudents } = await db.query(
+              `UPDATE org.students SET
+                 user_id = $1,
+                 program_id = $2,
+                 batch_id = $3,
+                 roll_number = $4,
+                 department = $5,
+                 batch_year = $6,
+                 track = $7,
+                 program_name = $8,
+                 class_name = COALESCE($9, class_name),
+                 updated_at = now()
+               WHERE id = $10
+               RETURNING id, roll_number`,
+              [
+                userRows[0].id,
+                programId,
+                batchId,
+                rollNumber.trim().toUpperCase(),
+                department || 'Computer Science & Engineering',
+                batchYear,
+                programName || department || 'General Track',
+                programName || null,
+                className || null,
+                existingStudents[0].id,
+              ]
+            );
+            studentId = updatedStudents[0].id;
+            finalRoll = updatedStudents[0].roll_number;
+          } else {
+            const { rows: insertedStudents } = await db.query(
+              `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track, program_name, class_name)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+               RETURNING id, roll_number`,
+              [
+                userRows[0].id,
+                programId,
+                batchId,
+                rollNumber.trim().toUpperCase(),
+                department || 'Computer Science & Engineering',
+                batchYear,
+                programName || department || 'General Track',
+                programName || null,
+                className || null,
+              ]
+            );
+            studentId = insertedStudents[0].id;
+            finalRoll = insertedStudents[0].roll_number;
+          }
+
+          if (className) {
+            await db.query(
+              `INSERT INTO org.department_classes (institution_id, department, name, batch_year, semester, student_count)
+               VALUES ($1, $2, $3, $4, 'Current Semester', 1)
+               ON CONFLICT DO NOTHING`,
+              [collegeId, department || 'Computer Science & Engineering', className.trim(), batchYear]
+            ).catch(() => {});
+          }
+
+          await db.query(
+            `INSERT INTO identity.role_assignments (user_id, role, institution_id, program_id, batch_id)
+             VALUES ($1, 'STUDENT', $2, $3, $4)
+             ON CONFLICT DO NOTHING`,
+            [userRows[0].id, collegeId, programId, batchId]
+          ).catch(() => {});
 
           imported.push({
-            id: studentRows[0].id,
+            id: studentId,
             name: name.trim(),
             email: email.toLowerCase().trim(),
-            rollNumber: studentRows[0].roll_number,
+            rollNumber: finalRoll,
             department: department || 'Computer Science & Engineering',
+            className: className || null,
             batchYear,
           });
 
@@ -194,11 +250,13 @@ studentBatchRouter.post(
         }
       }
 
+      const assignedToDeptCount = imported.filter(s => !!s.department).length;
+
       sendSuccess(res, {
         count: imported.length,
         students: imported,
         assignedToProgramCount: imported.length,
-        assignedToDepartmentCount: 0,
+        assignedToDepartmentCount: assignedToDeptCount,
         errors,
       }, 201);
     } catch (err) {
@@ -308,6 +366,7 @@ const enrollSingleSchema = z.object({
   batchYear: z.number().int().optional(),
   programName: z.string().optional(),
   subProgramName: z.string().optional(),
+  className: z.string().optional(),
 });
 
 studentBatchRouter.post(
@@ -322,7 +381,7 @@ studentBatchRouter.post(
         throw new AppError(422, 'Validation failed', 'VALIDATION_ERROR');
       }
 
-      const { name, email, rollNumber, password, batchYear } = parsed.data;
+      const { name, email, rollNumber, password, batchYear, className } = parsed.data;
 
       // Get or create default program/batch
       const year = batchYear || new Date().getFullYear();
@@ -362,36 +421,102 @@ studentBatchRouter.post(
         batchId = batches[0].id;
       }
 
-      // Create user
+      // Create or update user
       const passwordHash = await bcrypt.hash(password || 'welcome@2026', 10);
       const { rows: userRows } = await db.query(
-        `INSERT INTO identity.users (name, email, password_hash, role, status)
-         VALUES ($1, $2, $3, 'STUDENT', 'ACTIVE')
+        `INSERT INTO identity.users (name, email, password_hash, role, status, institution_id)
+         VALUES ($1, $2, $3, 'STUDENT', 'ACTIVE', $4)
+         ON CONFLICT (email) DO UPDATE SET
+           name = EXCLUDED.name,
+           institution_id = COALESCE(identity.users.institution_id, EXCLUDED.institution_id)
          RETURNING id`,
-        [name, email, passwordHash]
+        [name, email, passwordHash, collegeId]
       );
 
-      // Create student
+      // Create or update student safely
       const track = parsed.data.programName
         ? (parsed.data.subProgramName ? `${parsed.data.programName} (${parsed.data.subProgramName})` : parsed.data.programName)
         : (parsed.data.department || 'General Department');
 
-      const { rows: studentRows } = await db.query(
-        `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track, program_name, sub_program_name)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id, roll_number`,
-        [
-          userRows[0].id,
-          programId,
-          batchId,
-          rollNumber,
-          parsed.data.department || 'Computer Science & Engineering',
-          year,
-          track,
-          parsed.data.programName || null,
-          parsed.data.subProgramName || null
-        ]
+      const { rows: existingStudents } = await db.query(
+        `SELECT id FROM org.students 
+         WHERE user_id = $1 OR (roll_number IS NOT NULL AND roll_number = $2)
+         LIMIT 1`,
+        [userRows[0].id, rollNumber]
       );
+
+      let studentId: string;
+      let finalRoll: string;
+
+      if (existingStudents.length > 0) {
+        const { rows: updatedStudents } = await db.query(
+          `UPDATE org.students SET
+             user_id = $1,
+             program_id = $2,
+             batch_id = $3,
+             roll_number = $4,
+             department = $5,
+             batch_year = $6,
+             track = $7,
+             program_name = $8,
+             sub_program_name = $9,
+             class_name = COALESCE($10, class_name),
+             updated_at = now()
+           WHERE id = $11
+           RETURNING id, roll_number`,
+          [
+            userRows[0].id,
+            programId,
+            batchId,
+            rollNumber,
+            parsed.data.department || 'Computer Science & Engineering',
+            year,
+            track,
+            parsed.data.programName || null,
+            parsed.data.subProgramName || null,
+            className || null,
+            existingStudents[0].id,
+          ]
+        );
+        studentId = updatedStudents[0].id;
+        finalRoll = updatedStudents[0].roll_number;
+      } else {
+        const { rows: insertedStudents } = await db.query(
+          `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track, program_name, sub_program_name, class_name)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           RETURNING id, roll_number`,
+          [
+            userRows[0].id,
+            programId,
+            batchId,
+            rollNumber,
+            parsed.data.department || 'Computer Science & Engineering',
+            year,
+            track,
+            parsed.data.programName || null,
+            parsed.data.subProgramName || null,
+            className || null,
+          ]
+        );
+        studentId = insertedStudents[0].id;
+        finalRoll = insertedStudents[0].roll_number;
+      }
+
+      if (className) {
+        await db.query(
+          `INSERT INTO org.department_classes (institution_id, department, name, batch_year, semester, student_count)
+           VALUES ($1, $2, $3, $4, 'Current Semester', 1)
+           ON CONFLICT DO NOTHING`,
+          [collegeId, parsed.data.department || 'Computer Science & Engineering', className.trim(), year]
+        ).catch(() => {});
+      }
+
+      await db.query(
+        `INSERT INTO identity.role_assignments (user_id, role, institution_id, program_id, batch_id)
+         VALUES ($1, 'STUDENT', $2, $3, $4)
+         ON CONFLICT DO NOTHING`,
+        [userRows[0].id, collegeId, programId, batchId]
+      ).catch(() => {});
 
       sendStaffWelcomeEmail({
         to: email,
@@ -402,11 +527,12 @@ studentBatchRouter.post(
       }).catch((err) => console.error('[studentBatch] Email failed for single student ' + email + ':', err));
 
       sendSuccess(res, {
-        id: studentRows[0].id,
+        id: studentId,
         name,
         email,
-        rollNumber: studentRows[0].roll_number,
+        rollNumber: finalRoll,
         department: parsed.data.department || 'Computer Science & Engineering',
+        className: className || null,
         batchYear: year,
         track,
       }, 201);

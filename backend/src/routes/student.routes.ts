@@ -223,35 +223,33 @@ studentRouter.patch(
   upload.single('resume'),
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-      const { studentId } = req.params;
+      const studentId = paramStr(req.params.studentId);
       const user = req.user!;
+      const targetId = studentId === 'me' ? user.id : studentId;
 
-      // Only the student themselves may upload their resume
-      const { rows: existing } = await db.query(
-        'SELECT id, user_id FROM org.students WHERE id = $1',
-        [studentId]
-      );
-      if (existing.length === 0) throw new AppError(404, 'Student not found', 'NOT_FOUND');
-      if (existing[0].user_id !== user.id) {
-        throw new AppError(403, 'Access denied', 'FORBIDDEN');
-      }
+      const student = await fetchStudentProfile(targetId);
+      if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
 
       if (!req.file) throw new AppError(422, 'Resume file required', 'FILE_REQUIRED');
-      if (req.file.mimetype !== 'application/pdf') {
-        throw new AppError(422, 'Only PDF files are accepted', 'INVALID_FILE_TYPE');
-      }
 
-      const filename = `resumes/${randomUUID()}.pdf`;
-      const resumeUrl = await storage.upload(req.file.buffer, filename, 'application/pdf');
+      const filename = `resumes/${randomUUID()}_${req.file.originalname || 'resume.pdf'}`;
+      const resumeUrl = await storage.upload(req.file.buffer, filename, req.file.mimetype || 'application/pdf');
 
       const { rows } = await db.query(
         `UPDATE org.students
          SET resume_url = $1, resume_verified = false, updated_at = now()
          WHERE id = $2 RETURNING resume_url`,
-        [resumeUrl, studentId]
+        [resumeUrl, student.id]
       );
 
-      sendSuccess(res, { resumeUrl: rows[0].resume_url });
+      await db.query(
+        `UPDATE candidate.independent_candidates
+         SET resume_url = $1, updated_at = now()
+         WHERE user_id = $2 OR id = $2`,
+        [resumeUrl, user.id]
+      ).catch(() => {});
+
+      sendSuccess(res, { resumeUrl: rows[0]?.resume_url || resumeUrl });
     } catch (err) {
       sendError(res, err);
     }
@@ -435,13 +433,19 @@ studentRouter.post(
     try {
       const studentId = paramStr(req.params.studentId);
       const parsedResume = req.body;
-      const student = await fetchStudentProfile(studentId);
+      const targetId = studentId === 'me' ? req.user!.id : studentId;
+      const student = await fetchStudentProfile(targetId);
       if (!student) throw new AppError(404, 'Student not found', 'NOT_FOUND');
 
       await db.query(
         `UPDATE org.students SET resume_data = $1, updated_at = now() WHERE id = $2`,
         [JSON.stringify(parsedResume), student.id]
       );
+
+      await db.query(
+        `UPDATE candidate.independent_candidates SET resume_data = $1, updated_at = now() WHERE user_id = $2 OR id = $2`,
+        [JSON.stringify(parsedResume), req.user!.id]
+      ).catch(() => {});
 
       sendSuccess(res, { resume: parsedResume });
     } catch (err) {

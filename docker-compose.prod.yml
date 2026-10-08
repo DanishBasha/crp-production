@@ -39,8 +39,15 @@ services:
       PORT: 5000
       AI_SERVICE_URL: http://ai-service:8000
       REDIS_URL: redis://redis:6379
-      APP_URL: http://52.66.240.211
+      APP_URL: https://52.66.240.211
       CORS_ORIGIN: "*"
+      DATABASE_URL: postgresql://postgres.wnrxlsgsujxljlpcicpn:%23TAPTOPAy786@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
+      JWT_SECRET: crp-dev-secret-change-in-production-min-32-chars
+      EMAIL_PROVIDER: gmail
+      SMTP_USER: danishbasha18@gmail.com
+      SMTP_PASS: idlzbtomqditsach
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: "465"
     ports:
       - "5000:5000"
     dns:

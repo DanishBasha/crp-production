@@ -802,23 +802,29 @@ export const ListeningRoom: React.FC = () => {
     }
 
     try {
-      if (!mediaStreamRef.current || !mediaStreamRef.current.active) {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
+      if (typeof window !== 'undefined' && window.location.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+        window.location.href = window.location.href.replace('http:', 'https:');
+        return;
+      }
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        if (!mediaStreamRef.current || !mediaStreamRef.current.active) {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+              audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+              }
+            });
+            mediaStreamRef.current = stream;
+          } catch {
+            const fallbackStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaStreamRef.current = fallbackStream;
           }
-        });
-        mediaStreamRef.current = stream;
+        }
       }
-    } catch (e) {
-      try {
-        const fallbackStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaStreamRef.current = fallbackStream;
-      } catch (err) {
-        console.warn("ListeningRoom mic stream error:", err);
-      }
+    } catch (err) {
+      console.warn("ListeningRoom mic stream error:", err);
     }
 
     isRecordingRef.current = true;

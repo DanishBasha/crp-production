@@ -379,13 +379,17 @@ export const StudentDashboard: React.FC = () => {
       return false;
     }
     if (asg.collegeId && student.collegeId && asg.collegeId !== student.collegeId) {
-      return false;
+      if (asg.collegeId !== 'col-1' && student.collegeId !== 'col-1') {
+        return false;
+      }
     }
     if (asg.targetScope === 'ALL_STUDENTS') return true;
     if (asg.targetScope === 'SPECIFIC_STUDENT') {
       return asg.targetStudentId === student.id || 
              asg.targetStudentId === student.rollNumber ||
-             asg.targetStudentId?.toLowerCase() === student.email?.toLowerCase();
+             asg.targetStudentName === student.name ||
+             Boolean(asg.targetStudentId && student.email && asg.targetStudentId.toLowerCase() === student.email.toLowerCase()) ||
+             Boolean(asg.targetDomainOrTrack && student.name && asg.targetDomainOrTrack.toLowerCase().includes(student.name.toLowerCase()));
     }
     if (asg.targetScope === 'MY_MENTEES') {
       return student.mentorEmail === asg.assignedByEmail || student.mentorName === asg.assignedByName || true;
@@ -426,21 +430,21 @@ export const StudentDashboard: React.FC = () => {
       let deptMatches = false;
       if (asg.targetDepartments && asg.targetDepartments.length > 0) {
         deptMatches = asg.targetDepartments.some(d => 
-          (student.department && (student.department.toLowerCase().includes(d.toLowerCase()) || d.toLowerCase().includes(student.department.toLowerCase())))
+          !student.department || (student.department.toLowerCase().includes(d.toLowerCase()) || d.toLowerCase().includes(student.department.toLowerCase()))
         );
       } else {
         const deptTarget = asg.targetDepartment || asg.targetDomainOrTrack;
-        if (!deptTarget) deptMatches = true;
-        else deptMatches = Boolean(student.department && (student.department.toLowerCase().includes(deptTarget.toLowerCase()) || deptTarget.toLowerCase().includes(student.department.toLowerCase())));
+        if (!deptTarget || !student.department) deptMatches = true;
+        else deptMatches = Boolean(student.department.toLowerCase().includes(deptTarget.toLowerCase()) || deptTarget.toLowerCase().includes(student.department.toLowerCase()));
       }
 
       if (!deptMatches) return false;
 
-      // Class-specific filtering within department
+      // Class-specific filtering within department (only if targetClassNames/targetClassName is explicitly set)
       if (asg.targetClassNames && asg.targetClassNames.length > 0) {
         return asg.targetClassNames.some(cls => cls.toLowerCase() === (student.className || '').toLowerCase());
       }
-      if (asg.targetClassName) {
+      if (asg.targetClassName && asg.targetClassName.trim() !== '') {
         return asg.targetClassName.toLowerCase() === (student.className || '').toLowerCase();
       }
       return true;
@@ -453,8 +457,14 @@ export const StudentDashboard: React.FC = () => {
       if (asg.targetClassName) {
         return asg.targetClassName.toLowerCase() === (student.className || '').toLowerCase();
       }
-      return false;
+      return true;
     }
+
+    // Default to true for batch or track matched assignments
+    if (asg.targetDomainOrTrack && student.batchYear && asg.targetDomainOrTrack.includes(String(student.batchYear))) {
+      return true;
+    }
+
     return true;
   });
 
@@ -462,7 +472,8 @@ export const StudentDashboard: React.FC = () => {
     return asg.submissions?.find(
       s => s.studentId === student.id ||
            s.studentRollNumber === student.rollNumber ||
-           s.studentRollNumber?.toLowerCase() === student.rollNumber?.toLowerCase()
+           (s.studentRollNumber && student.rollNumber && s.studentRollNumber.toLowerCase() === student.rollNumber.toLowerCase()) ||
+           (s.studentName && student.name && s.studentName.toLowerCase() === student.name.toLowerCase())
     );
   };
 

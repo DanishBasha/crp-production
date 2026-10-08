@@ -370,6 +370,16 @@ export const MockInterviewRoom: React.FC = () => {
 
   const initMicrophoneStream = async (): Promise<boolean> => {
     try {
+      if (typeof window !== 'undefined' && window.location.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+        setMicPermissionError("Microphone access requires HTTPS. Please switch to HTTPS so your browser allows the microphone.");
+        return false;
+      }
+
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setMicPermissionError("Microphone hardware is unavailable. Please ensure you are browsing via HTTPS or allow microphone in site settings.");
+        return false;
+      }
+
       if (!mediaStreamRef.current || !mediaStreamRef.current.active) {
         let stream: MediaStream;
         try {
@@ -458,7 +468,9 @@ export const MockInterviewRoom: React.FC = () => {
     } catch (err: any) {
       console.warn("Audio meter setup warning:", err);
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setMicPermissionError("Microphone permission was denied. Please allow microphone access in your browser address bar.");
+        setMicPermissionError("Microphone permission was denied. Please click the lock or camera/mic icon in your address bar and allow Microphone access.");
+      } else {
+        setMicPermissionError(err.message || "Failed to initialize microphone.");
       }
       return false;
     }
@@ -747,10 +759,14 @@ export const MockInterviewRoom: React.FC = () => {
 
   const handleStartSession = async () => {
     setIsStartingSession(true);
+    setMicPermissionError(null);
     try {
       requestFullscreen();
       setDrawerOpen(false);
-      await initMicrophoneStream();
+      const micGranted = await initMicrophoneStream();
+      if (!micGranted) {
+        return;
+      }
       setHasSessionStarted(true);
     } finally {
       setIsStartingSession(false);
@@ -1160,9 +1176,19 @@ export const MockInterviewRoom: React.FC = () => {
       )}
 
       {micPermissionError && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-center justify-between text-amber-900 text-xs">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex flex-col sm:flex-row items-center justify-between text-amber-900 text-xs gap-2">
           <span>{micPermissionError}</span>
-          <button onClick={() => setMicPermissionError(null)} className="text-amber-700 font-bold ml-2">Dismiss</button>
+          <div className="flex items-center space-x-2 shrink-0">
+            {typeof window !== 'undefined' && window.location.protocol === 'http:' && (
+              <button 
+                onClick={() => { window.location.href = window.location.href.replace('http:', 'https:'); }}
+                className="bg-amber-800 hover:bg-amber-900 text-white px-3 py-1 rounded text-[11px] font-semibold cursor-pointer"
+              >
+                Switch to HTTPS
+              </button>
+            )}
+            <button onClick={() => setMicPermissionError(null)} className="text-amber-700 font-bold ml-2 cursor-pointer">Dismiss</button>
+          </div>
         </div>
       )}
 
