@@ -831,6 +831,10 @@ export const MockInterviewRoom: React.FC = () => {
 
   const startRecording = async () => {
     if (timeUpRef.current) return;
+    // Already listening to this answer. Cancelling the question's speech (Skip, or the next
+    // question arriving) also fires its "finished speaking" callback, which calls this again;
+    // a second recorder would mix two audio streams and nothing would be transcribed.
+    if (isRecordingRef.current && mediaRecorderRef.current?.state === 'recording') return;
     setMicPermissionError(null);
     isSubmittingRef.current = false;
     setIsSubmitting(false);
