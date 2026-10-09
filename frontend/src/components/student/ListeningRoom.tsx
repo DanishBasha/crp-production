@@ -940,7 +940,8 @@ export const ListeningRoom: React.FC = () => {
       try {
         const res = await api.listening.submitAnswers(sessionId, newAnswers, {
           passage: curPass,
-          topic: activeAssignment?.domainOrTopic || activeAssignment?.title || curPass.domain
+          topic: activeAssignment?.domainOrTopic || activeAssignment?.title || curPass.domain,
+          assignmentId: activeAssignment?.id
         });
         await completeAssessmentAwaitingEvaluation('LISTENING_COMPREHENSION', res?.finalReport || null);
       } catch (err) {

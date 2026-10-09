@@ -52,7 +52,9 @@ export const StudentDashboard: React.FC = () => {
     payRefillCoins,
     isEvaluationPending,
     newReportNotification,
-    dismissNewReportNotification
+    dismissNewReportNotification,
+    resumeUploadModalOpen,
+    setResumeUploadModalOpen
   } = useApp();
 
   const isIndependent = student.isIndependent || currentUser?.isIndependent;
@@ -103,8 +105,24 @@ export const StudentDashboard: React.FC = () => {
   // Sub-views & Modals
   const [viewingResumePage, setViewingResumePage] = useState(false);
   const [viewingAllAssignments, setViewingAllAssignments] = useState(false);
-  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const uploadModalOpen = resumeUploadModalOpen;
+  const setUploadModalOpen = setResumeUploadModalOpen;
   const [handlesModalOpen, setHandlesModalOpen] = useState(false);
+
+  const hasValidResume = Boolean(
+    student.resume && (
+      (student.resume.skills && (
+        (student.resume.skills.languages && student.resume.skills.languages.length > 0) ||
+        (student.resume.skills.frameworks && student.resume.skills.frameworks.length > 0) ||
+        (student.resume.skills.databases && student.resume.skills.databases.length > 0) ||
+        (student.resume.skills.tools && student.resume.skills.tools.length > 0)
+      )) ||
+      (student.resume.projects && student.resume.projects.length > 0) ||
+      (student.resume.summary && student.resume.summary.trim().length > 0) ||
+      Boolean((student.resume as any).text) ||
+      Boolean(student.resume.fileName)
+    )
+  );
 
   useBackHandler(viewingResumePage, () => setViewingResumePage(false));
   useBackHandler(viewingAllAssignments, () => setViewingAllAssignments(false));
@@ -990,6 +1008,12 @@ export const StudentDashboard: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => {
+                          const isResumeBased = asg.sessionType === 'MOCK_INTERVIEW' && asg.interviewMode === 'RESUME_BASED';
+                          if (isResumeBased && !hasValidResume) {
+                            alert("Resume Required: Please upload your resume before attending this resume-based interview session.");
+                            setResumeUploadModalOpen(true);
+                            return;
+                          }
                           if (typeof document !== 'undefined' && !document.fullscreenElement && document.documentElement.requestFullscreen) {
                             document.documentElement.requestFullscreen().catch(() => {});
                           }
@@ -1438,6 +1462,11 @@ export const StudentDashboard: React.FC = () => {
               type="button"
               disabled={!isIndependent && (student.coins ?? 5) < 1}
               onClick={() => {
+                if (!hasValidResume) {
+                  alert("Resume Required: Please upload your resume before attending a resume-based interview session.");
+                  setResumeUploadModalOpen(true);
+                  return;
+                }
                 if (!isIndependent && (student.coins ?? 5) < 1) {
                   alert("Insufficient Coins: You need at least 1 coin to attend an interview or communication session. Your balance is 0 Coins.");
                   return;
@@ -1568,6 +1597,11 @@ export const StudentDashboard: React.FC = () => {
             <button
               type="button"
               onClick={() => {
+                if (!hasValidResume) {
+                  alert("Resume Required: Please upload your resume before attending a resume-based interview session.");
+                  setResumeUploadModalOpen(true);
+                  return;
+                }
                 if (typeof document !== 'undefined' && !document.fullscreenElement && document.documentElement.requestFullscreen) {
                   document.documentElement.requestFullscreen().catch(() => {});
                 }

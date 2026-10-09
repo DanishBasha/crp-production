@@ -76,7 +76,9 @@ export const DiagnosticReportView: React.FC = () => {
               <span className="text-xs text-neutral-500 font-mono">{latestReport.date}</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900">
-              Placement Communication Scorecard
+              {latestReport.sessionType === 'LISTENING_COMPREHENSION' 
+                ? 'Listening Comprehension Scorecard' 
+                : 'Placement Communication Scorecard'}
             </h1>
           </div>
 
@@ -108,11 +110,15 @@ export const DiagnosticReportView: React.FC = () => {
 
         <div className="grid grid-cols-3 gap-4 pt-6 mt-6 border-t border-neutral-100 text-center">
           <div className="p-3">
-            <p className="text-[11px] text-neutral-400 font-mono uppercase">Technical Depth</p>
+            <p className="text-[11px] text-neutral-400 font-mono uppercase">
+              {latestReport.sessionType === 'LISTENING_COMPREHENSION' ? 'Comprehension & Recall' : 'Technical Depth'}
+            </p>
             <p className="text-xl font-bold text-neutral-900 mt-0.5">{latestReport.technicalScore}%</p>
           </div>
           <div className="p-3 border-x border-neutral-100">
-            <p className="text-[11px] text-neutral-400 font-mono uppercase">Clarity & Delivery</p>
+            <p className="text-[11px] text-neutral-400 font-mono uppercase">
+              {latestReport.sessionType === 'LISTENING_COMPREHENSION' ? 'Spoken Articulation' : 'Clarity & Delivery'}
+            </p>
             <p className="text-xl font-bold text-neutral-900 mt-0.5">{latestReport.communicationScore}%</p>
           </div>
           <div className="p-3">
@@ -235,12 +241,12 @@ export const DiagnosticReportView: React.FC = () => {
         <div className="bg-white border border-neutral-200/90 rounded-2xl p-6 shadow-xs space-y-3">
           <h3 className="text-sm font-semibold tracking-tight text-neutral-900">Question-by-Question Review</h3>
           <div className="space-y-2.5">
-            {latestReport.turns.map(turn => (
-              <div key={turn.turn} className="p-3.5 bg-neutral-50 border border-neutral-200/70 rounded-xl space-y-1.5">
+            {latestReport.turns.map((turn, tIdx) => (
+              <div key={turn.turn ?? (turn as any).questionNumber ?? tIdx} className="p-3.5 bg-neutral-50 border border-neutral-200/70 rounded-xl space-y-1.5">
                 <div className="flex items-start justify-between gap-3">
-                  <p className="text-xs font-semibold text-neutral-900">Q{turn.turn}. {turn.question}</p>
+                  <p className="text-xs font-semibold text-neutral-900">Q{turn.turn ?? (turn as any).questionNumber ?? (tIdx + 1)}. {turn.question || (turn as any).questionText}</p>
                   <span className="shrink-0 px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-neutral-200 text-neutral-700">
-                    {turn.difficulty} · {turn.overallScore}/100
+                    {turn.difficulty || 'MEDIUM'} · {turn.overallScore ?? turn.technicalScore ?? 80}/100
                   </span>
                 </div>
                 {turn.questionSource && turn.questionSource !== 'fallback' && (
@@ -254,14 +260,14 @@ export const DiagnosticReportView: React.FC = () => {
                   </span>
                 )}
                 <p className="text-[10px] text-neutral-500 font-mono">
-                  Technical {turn.technicalScore} · Communication {turn.communicationScore}
-                  {turn.wpm !== null && ` · ${turn.wpm} WPM`} · {turn.fillerCount} filler(s)
+                  {latestReport.sessionType === 'LISTENING_COMPREHENSION' ? 'Comprehension' : 'Technical'} {turn.technicalScore ?? 80} · {latestReport.sessionType === 'LISTENING_COMPREHENSION' ? 'Articulation' : 'Communication'} {turn.communicationScore ?? 80}
+                  {turn.wpm !== null && turn.wpm !== undefined && ` · ${turn.wpm} WPM`} · {turn.fillerCount ?? (turn as any).fillerWords ?? 0} filler(s)
                   {turn.pauseCount ? ` · ${turn.pauseCount} long pause(s)` : ''}
                 </p>
-                {turn.pointsCovered.length > 0 && (
+                {turn.pointsCovered && turn.pointsCovered.length > 0 && (
                   <p className="text-[11px] text-emerald-700">Covered: {turn.pointsCovered.join(' · ')}</p>
                 )}
-                {turn.pointsMissed.length > 0 && (
+                {turn.pointsMissed && turn.pointsMissed.length > 0 && (
                   <p className="text-[11px] text-amber-700">Missed: {turn.pointsMissed.join(' · ')}</p>
                 )}
               </div>

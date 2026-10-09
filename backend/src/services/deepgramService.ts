@@ -50,8 +50,8 @@ export async function openSession(
       model: 'nova-3',
       language: 'en',
       interim_results: ListenV1InterimResults.True,
-      utterance_end_ms: 2500,
-      endpointing: 500,
+      utterance_end_ms: 3000,
+      endpointing: 2500,
       smart_format: ListenV1SmartFormat.True,
       vad_events: ListenV1VadEvents.True,
       filler_words: 'true', // keep "um"/"uh" in transcripts — they are scored (blueprint §4.4)

@@ -217,6 +217,8 @@ interface AppContextType {
     permissions?: AdminPermission[];
   }) => void;
   returnToOriginalDashboard: () => void;
+  resumeUploadModalOpen: boolean;
+  setResumeUploadModalOpen: (open: boolean) => void;
   theme: 'light' | 'dark';
   setTheme: (theme: 'light' | 'dark') => void;
   toggleTheme: () => void;
@@ -244,6 +246,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   abandonWarningOpenRef.current = abandonWarningOpen;
   const confirmSignOutOpenRef = useRef<boolean>(confirmSignOutOpen);
   const [inspectedStudent, setInspectedStudent] = useState<StudentProfile | any | null>(null);
+  const [resumeUploadModalOpen, setResumeUploadModalOpen] = useState(false);
 
   // Dark Mode Theme state with localStorage persistence & system preference detection
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
@@ -1210,13 +1213,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     } catch {}
 
+    // Determine if resume is required
+    const isResumeBased = (currentAsg && currentAsg.sessionType === 'MOCK_INTERVIEW')
+      ? currentAsg.interviewMode === 'RESUME_BASED'
+      : (type === 'MOCK_INTERVIEW' && (options?.isResumeBased ?? true));
+
+    if (type === 'MOCK_INTERVIEW' && isResumeBased) {
+      const hasValidResume = Boolean(
+        student.resume && (
+          (student.resume.skills && (
+            (student.resume.skills.languages && student.resume.skills.languages.length > 0) ||
+            (student.resume.skills.frameworks && student.resume.skills.frameworks.length > 0) ||
+            (student.resume.skills.databases && student.resume.skills.databases.length > 0) ||
+            (student.resume.skills.tools && student.resume.skills.tools.length > 0)
+          )) ||
+          (student.resume.projects && student.resume.projects.length > 0) ||
+          (student.resume.summary && student.resume.summary.trim().length > 0) ||
+          Boolean((student.resume as any).text) ||
+          Boolean(student.resume.fileName)
+        )
+      );
+
+      if (!hasValidResume) {
+        alert("Resume Required: Please upload your resume before attending this resume-based interview session.");
+        setResumeUploadModalOpen(true);
+        return;
+      }
+    }
+
     // Self-serve interview is ALWAYS grounded on candidate's Personal Resume & Projects
     const targetTopic = currentAsg 
       ? (currentAsg.interviewMode === 'RESUME_BASED' ? 'Personal Resume & Projects' : (currentAsg.domainOrTopic || currentAsg.title || 'Technical Interview'))
       : 'Personal Resume & Projects';
 
     try {
-      const data = await api.interview.start(student.id || 'stu-21cs1084', type, targetTopic, student.resume);
+      const data = await api.interview.start(
+        student.id || 'stu-21cs1084',
+        type,
+        targetTopic,
+        student.resume,
+        currentAsg?.id,
+        currentAsg?.interviewMode || (isResumeBased ? 'RESUME_BASED' : 'TOPIC')
+      );
       const isCandidateIndep = Boolean(student.isIndependent || currentUser?.isIndependent);
       const remainingCoins = isCandidateIndep
         ? 999
@@ -1260,7 +1298,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // A mock interview runs only on the live interview server; never on made-up questions
         setSessionCoinAtStake(false);
         if (typeof document !== 'undefined' && document.fullscreenElement) document.exitFullscreen().catch(() => {});
-        alert(`Could not start the interview: ${err instanceof Error ? err.message : 'the server is unavailable'}`);
+        const errMsg = err instanceof Error ? err.message : 'the server is unavailable';
+        if (errMsg.toLowerCase().includes('upload your resume') || (err as any)?.code === 'RESUME_REQUIRED') {
+          alert('Resume Required: Please upload your resume before attending this resume-based interview.');
+          setResumeUploadModalOpen(true);
+          return;
+        }
+        alert(`Could not start the interview: ${errMsg}`);
         return;
       }
       console.warn('[AppContext] Interview start fallback to dynamic session:', err);
@@ -2157,6 +2201,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       openStudentDashboard,
       openAdminDashboard,
       returnToOriginalDashboard,
+      resumeUploadModalOpen,
+      setResumeUploadModalOpen,
       theme,
       setTheme,
       toggleTheme

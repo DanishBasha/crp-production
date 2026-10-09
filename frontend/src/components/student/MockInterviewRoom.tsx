@@ -654,42 +654,45 @@ export const MockInterviewRoom: React.FC = () => {
 
             const now = Date.now();
 
-            if (voiceActive) {
-              hasSpokenRef.current = true;
-              if (isRecordingRef.current && speechStartTimeRef.current === null) {
-                speechStartTimeRef.current = now;
-              } else if (isRecordingRef.current && lastVoiceActiveTimeRef.current > 0) {
-                const silenceMs = now - lastVoiceActiveTimeRef.current;
-                if (silenceMs >= LONG_PAUSE_MS) {
-                  pauseCountRef.current += 1;
-                  longestPauseMsRef.current = Math.max(longestPauseMsRef.current, silenceMs);
+            // ONLY process voice activity and silence detection if currently recording and NOT speaking
+            if (isRecordingRef.current && !isSpeakingRef.current) {
+              if (voiceActive) {
+                hasSpokenRef.current = true;
+                if (speechStartTimeRef.current === null) {
+                  speechStartTimeRef.current = now;
+                } else if (lastVoiceActiveTimeRef.current > 0) {
+                  const silenceMs = now - lastVoiceActiveTimeRef.current;
+                  if (silenceMs >= LONG_PAUSE_MS) {
+                    pauseCountRef.current += 1;
+                    longestPauseMsRef.current = Math.max(longestPauseMsRef.current, silenceMs);
+                  }
                 }
-              }
-              lastVoiceActiveTimeRef.current = now;
-              voiceDurationMsRef.current += 16;
+                lastVoiceActiveTimeRef.current = now;
+                voiceDurationMsRef.current += 16;
 
-              // Clear silence timer if user speaks again (same threshold as voice detection)
-              if (avg > 16 && silenceTimerRef.current) {
-                clearTimeout(silenceTimerRef.current);
-                silenceTimerRef.current = null;
-              }
-            } else {
-              // Voice is quiet right now
-              // If candidate has spoken in this turn, session is recording, not submitting, and autoMode is on
-              if (
-                hasSpokenRef.current && 
-                isRecordingRef.current && 
-                !isSubmittingRef.current && 
-                autoModeRef.current
-              ) {
-                const silenceDuration = now - lastVoiceActiveTimeRef.current;
+                // Clear silence timer if user speaks again (same threshold as voice detection)
+                if (avg > 16 && silenceTimerRef.current) {
+                  clearTimeout(silenceTimerRef.current);
+                  silenceTimerRef.current = null;
+                }
+              } else {
+                // Voice is quiet right now
+                // If candidate has spoken in this turn, session is recording, not submitting, and autoMode is on
+                if (
+                  hasSpokenRef.current && 
+                  !isSubmittingRef.current && 
+                  autoModeRef.current &&
+                  lastVoiceActiveTimeRef.current > 0
+                ) {
+                  const silenceDuration = now - lastVoiceActiveTimeRef.current;
 
-                // When silence reaches 1500ms after speaking, allow 5s quiet window before auto-submission
-                if (silenceDuration >= 1500 && !silenceTimerRef.current) {
-                  silenceTimerRef.current = setTimeout(() => {
-                    silenceTimerRef.current = null;
-                    handleExecuteSubmit(latestSpeechRef.current || currentSpeechText);
-                  }, 5000);
+                  // When silence reaches 2500ms after speaking, allow 5s quiet window before auto-submission
+                  if (silenceDuration >= 2500 && !silenceTimerRef.current) {
+                    silenceTimerRef.current = setTimeout(() => {
+                      silenceTimerRef.current = null;
+                      handleExecuteSubmit(latestSpeechRef.current || currentSpeechText);
+                    }, 5000);
+                  }
                 }
               }
             }
@@ -827,13 +830,22 @@ export const MockInterviewRoom: React.FC = () => {
   };
 
   const startRecording = async () => {
-    if (isSubmittingRef.current || timeUpRef.current) return;
+    if (timeUpRef.current) return;
     setMicPermissionError(null);
-    speechStartTimeRef.current = null;
+    isSubmittingRef.current = false;
+    setIsSubmitting(false);
+    hasSpokenRef.current = false;
     lastVoiceActiveTimeRef.current = 0;
+    speechStartTimeRef.current = null;
     listenStartTimeRef.current = Date.now();
     pauseCountRef.current = 0;
     longestPauseMsRef.current = 0;
+
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    setSilenceCountdown(null);
 
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
@@ -841,7 +853,11 @@ export const MockInterviewRoom: React.FC = () => {
     isSpeakingRef.current = false;
     setIsSpeakingQuestion(false);
 
-    await initMicrophoneStream();
+    // Verify microphone audio track is live
+    const hasLiveAudioTrack = mediaStreamRef.current && mediaStreamRef.current.getAudioTracks().some(track => track.readyState === 'live');
+    if (!hasLiveAudioTrack) {
+      await initMicrophoneStream();
+    }
 
     if (!mediaStreamRef.current || !liveSocketRef.current) {
       setMicPermissionError('Live interview audio is not connected. Please restart the session.');
@@ -922,6 +938,8 @@ export const MockInterviewRoom: React.FC = () => {
 
           let hasEnded = false;
           let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
+          let startFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
           const handleEnd = () => {
             if (hasEnded) return;
             hasEnded = true;
@@ -929,10 +947,18 @@ export const MockInterviewRoom: React.FC = () => {
               clearInterval(keepAliveInterval);
               keepAliveInterval = null;
             }
+            if (startFallbackTimer) {
+              clearTimeout(startFallbackTimer);
+              startFallbackTimer = null;
+            }
             onDone();
           };
 
           utterance.onstart = () => {
+            if (startFallbackTimer) {
+              clearTimeout(startFallbackTimer);
+              startFallbackTimer = null;
+            }
             isSpeakingRef.current = true;
             setIsSpeakingQuestion(true);
             setAudioVolume(0.35);
@@ -940,11 +966,7 @@ export const MockInterviewRoom: React.FC = () => {
 
           utterance.onend = handleEnd;
           utterance.onerror = (e: any) => {
-            // 'interrupted' / 'canceled' are expected when speech is skipped or replaced
-            if (e.error === 'interrupted' || e.error === 'canceled') {
-              return;
-            }
-            console.warn('SpeechSynthesis error:', e.error);
+            console.warn('SpeechSynthesis error/interrupt:', e?.error);
             handleEnd();
           };
 
@@ -958,6 +980,14 @@ export const MockInterviewRoom: React.FC = () => {
             window.speechSynthesis.pause();
             window.speechSynthesis.resume();
           }, 8000);
+
+          // Fallback if browser never reports start or stalls on queue
+          startFallbackTimer = setTimeout(() => {
+            if (!hasEnded && !window.speechSynthesis.speaking) {
+              console.warn('SpeechSynthesis stalled on start, recovering to listening...');
+              handleEnd();
+            }
+          }, 1800);
 
           // Fallback if the browser never reports the end: about 11 characters a second, plus a margin
           const safetyTimeout = Math.max(10000, questionText.length * 90 + 8000);
@@ -1634,20 +1664,13 @@ export const MockInterviewRoom: React.FC = () => {
                 </div>
               )}
 
-              {/* Live transcript — student can see what the interviewer is hearing */}
+              {/* Voice recording indicator without live speech transcription display */}
               {isRecording && (
-                <div className="w-full max-w-xl mt-5 min-h-[52px] flex flex-col items-center">
-                  {currentSpeechText ? (
-                    <div className="w-full bg-neutral-950/90 border border-neutral-700 rounded-2xl px-4 py-3 text-center">
-                      <p className="text-xs text-neutral-400 font-mono mb-1 uppercase tracking-wider">Interviewer hearing:</p>
-                      <p className="text-sm text-white leading-relaxed">{currentSpeechText}</p>
-                    </div>
-                  ) : (
-                    <div className="inline-flex items-center space-x-2 text-xs text-neutral-500 font-mono">
-                      <span className="w-2 h-2 rounded-full bg-neutral-400 animate-pulse"></span>
-                      <span>Listening — speak clearly into your microphone</span>
-                    </div>
-                  )}
+                <div className="w-full max-w-xl mt-5 min-h-[52px] flex flex-col items-center justify-center">
+                  <div className="inline-flex items-center space-x-2 text-xs text-neutral-500 font-mono">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>Listening — speak clearly into your microphone</span>
+                  </div>
                 </div>
               )}
             </div>

@@ -1774,7 +1774,9 @@ class ApiClient {
       studentId: string, 
       type: 'MOCK_INTERVIEW' | 'LISTENING_COMPREHENSION' | 'PRACTICE' = 'MOCK_INTERVIEW', 
       topic?: string | ParsedResume | null,
-      resume?: ParsedResume | null
+      resume?: ParsedResume | null,
+      assignmentId?: string,
+      interviewMode?: 'RESUME_BASED' | 'TOPIC'
     ): Promise<{ sessionId: string; firstQuestion: QuestionTurn; maxTurns?: number; coinsRemaining?: number }> => {
       let customTopic: string | undefined;
       let resumeObj: ParsedResume | null | undefined;
@@ -1812,6 +1814,8 @@ class ApiClient {
         body: JSON.stringify({
           sessionType: type,
           topic: customTopic,
+          assignmentId,
+          interviewMode,
           ...(skills.length || projects.length ? { resume: { skills: skills.slice(0, 40), projects: projects.slice(0, 10) } } : {})
         }),
       });
@@ -2065,7 +2069,7 @@ class ApiClient {
       return { replaysUsed: sess.replaysUsed };
     },
 
-    submitAnswers: async (sessionId: string, answers: { questionId: string; answerText: string }[], options?: { passage?: any; topic?: string }) => {
+    submitAnswers: async (sessionId: string, answers: { questionId: string; answerText: string }[], options?: { passage?: any; topic?: string; assignmentId?: string }) => {
       const student = await this.student.getProfile();
 
       // 1. Attempt backend submission with PostgreSQL persistence
@@ -2077,7 +2081,8 @@ class ApiClient {
             studentId: student?.id,
             topic: options?.topic,
             passage: options?.passage,
-            answers
+            answers,
+            assignmentId: options?.assignmentId
           })
         });
 

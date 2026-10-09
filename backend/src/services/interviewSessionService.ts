@@ -205,7 +205,13 @@ async function createStudentForUser(userId: string): Promise<(StudentContext & {
   return newStu.length > 0 ? { ...newStu[0], name: u.name } : null;
 }
 
-export async function startLiveInterview(userId: string, _resumeInput?: ResumeInput, topic?: string): Promise<{
+export async function startLiveInterview(
+  userId: string,
+  _resumeInput?: ResumeInput,
+  topic?: string,
+  assignmentId?: string,
+  interviewMode?: 'RESUME_BASED' | 'TOPIC'
+): Promise<{
   sessionId: string;
   attemptId: string;
   maxTurns: number;
@@ -222,6 +228,39 @@ export async function startLiveInterview(userId: string, _resumeInput?: ResumeIn
   const student = rows[0] ?? await createStudentForUser(userId);
   if (!student) throw new AppError(404, 'Student profile not found', 'NOT_FOUND');
 
+  // Enforce resume validation for resume-based sessions
+  let isResumeBased = interviewMode === 'RESUME_BASED';
+  if (!interviewMode && assignmentId) {
+    const { rows: asgRows } = await db.query<{ interview_mode: string; session_type: string }>(
+      'SELECT interview_mode, session_type FROM org.interview_assignments WHERE id = $1',
+      [assignmentId]
+    );
+    if (asgRows.length > 0) {
+      isResumeBased = asgRows[0].session_type === 'MOCK_INTERVIEW' && asgRows[0].interview_mode === 'RESUME_BASED';
+    }
+  } else if (!interviewMode && !assignmentId) {
+    const cleanTopic = (topic ?? '').trim().toLowerCase();
+    isResumeBased = RESUME_INTERVIEW_TOPICS.has(cleanTopic);
+  }
+
+  const resume = await loadResume(student.id, student.name)
+    .catch(() => ({ name: student.name, skills: [], projects: [] }) as InterviewResume);
+
+  if (isResumeBased) {
+    const hasValidResume = Boolean(
+      (resume.skills && resume.skills.length > 0) ||
+      (resume.projects && resume.projects.length > 0) ||
+      (resume.text && resume.text.trim().length > 0)
+    );
+    if (!hasValidResume) {
+      throw new AppError(
+        400,
+        'Please upload your resume before attending this resume-based interview.',
+        'RESUME_REQUIRED'
+      );
+    }
+  }
+
   const { attemptId, sessionId } = await createAttemptAndSession(student);
   let coinsRemaining: number;
   try {
@@ -231,8 +270,6 @@ export async function startLiveInterview(userId: string, _resumeInput?: ResumeIn
     throw err;
   }
   const maxTurns = env.MAX_QUESTIONS_PER_SESSION;
-  const resume = await loadResume(student.id, student.name)
-    .catch(() => ({ name: student.name, skills: [], projects: [] }) as InterviewResume);
 
   const assignedTopic = RESUME_INTERVIEW_TOPICS.has((topic ?? '').trim().toLowerCase()) ? '' : topic!.trim().slice(0, 200);
 

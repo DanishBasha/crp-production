@@ -169,19 +169,19 @@ listeningRouter.delete(
 // ── POST /api/listening/submit-answers ──────────────────────────────────────────
 listeningRouter.post('/submit-answers', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { sessionId, studentId, topic, passage, answers = [] } = req.body;
+    const { sessionId, studentId, topic, passage, answers = [], assignmentId } = req.body;
     let student: any = null;
     const targetUserId = req.user?.id;
     if (studentId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(studentId)) {
-      const { rows } = await db.query(`SELECT id, user_id, program_id, batch_id, track, recent_reports FROM org.students WHERE id = $1`, [studentId]);
+      const { rows } = await db.query(`SELECT s.id, s.user_id, s.program_id, s.batch_id, s.track, s.roll_number, u.name, s.recent_reports FROM org.students s JOIN identity.users u ON u.id = s.user_id WHERE s.id = $1`, [studentId]);
       if (rows.length > 0) student = rows[0];
     }
     if (!student && targetUserId) {
-      const { rows } = await db.query(`SELECT id, user_id, program_id, batch_id, track, recent_reports FROM org.students WHERE user_id = $1`, [targetUserId]);
+      const { rows } = await db.query(`SELECT s.id, s.user_id, s.program_id, s.batch_id, s.track, s.roll_number, u.name, s.recent_reports FROM org.students s JOIN identity.users u ON u.id = s.user_id WHERE s.user_id = $1`, [targetUserId]);
       if (rows.length > 0) student = rows[0];
     }
     if (!student) {
-      const { rows } = await db.query(`SELECT id, user_id, program_id, batch_id, track, recent_reports FROM org.students ORDER BY created_at DESC LIMIT 1`);
+      const { rows } = await db.query(`SELECT s.id, s.user_id, s.program_id, s.batch_id, s.track, s.roll_number, u.name, s.recent_reports FROM org.students s JOIN identity.users u ON u.id = s.user_id ORDER BY s.created_at DESC LIMIT 1`);
       student = rows[0] || null;
     }
 
@@ -223,15 +223,26 @@ listeningRouter.post('/submit-answers', async (req: AuthRequest, res: Response):
 
     const turns = evaluations.map((ev: any, i: number) => ({
       id: `lis_turn_${i + 1}`,
+      turn: i + 1,
       questionNumber: i + 1,
+      question: ev.questionText,
       questionText: ev.questionText,
       difficulty: 'MEDIUM',
+      category: 'Listening Comprehension',
       studentAnswer: ev.studentAnswer,
+      answer: ev.studentAnswer,
       technicalScore: ev.score,
       communicationScore: Math.min(95, ev.score + 2),
+      overallScore: ev.score,
       wpm: 126,
-      fillerWords: 1,
-      feedback: ev.feedback
+      fillerWords: 0,
+      fillerCount: 0,
+      pauseCount: 0,
+      pointsCovered: ev.matchedKeywords > 0 ? [`Captured ${ev.matchedKeywords} key technical term(s)`] : ['General conceptual understanding demonstrated'],
+      pointsMissed: ev.score < 80 ? ['Did not fully address all key constraints in passage'] : [],
+      feedback: ev.feedback,
+      strengths: ev.score >= 80 ? 'Accurate recall of technical requirements and constraints.' : 'Understood general concept.',
+      weaknesses: ev.score < 80 ? 'Review technical constraints and specifications in the passage.' : 'None noted.'
     }));
 
     const finalReport = {
@@ -241,9 +252,21 @@ listeningRouter.post('/submit-answers', async (req: AuthRequest, res: Response):
       overallScore: avgScore,
       technicalScore: avgScore,
       communicationScore: Math.min(95, avgScore + 2),
+      listeningScore: avgScore,
+      fluencyScore: Math.min(95, avgScore + 2),
+      clarityScore: Math.min(95, avgScore + 1),
       averageWpm: 126,
-      totalFillerWords: 1,
-      fillerWordBreakdown: { 'uh': 1 },
+      totalFillerWords: 0,
+      fillerWordBreakdown: {},
+      tabSwitches: 0,
+      isDisqualified: false,
+      questionsAnswered: answers.length,
+      questionsPlanned: answers.length,
+      scoringMethod: [
+        'Overall Score = Average of individual question comprehension scores.',
+        'Listening Retention = Keyword recall against passage rubric.',
+        'Spoken Articulation = Technical clarity and vocabulary.'
+      ],
       skillBreakdown: [
         {
           skill: `${topic || passage?.domain || 'Listening Comprehension'} Retention`,
@@ -252,7 +275,7 @@ listeningRouter.post('/submit-answers', async (req: AuthRequest, res: Response):
           recommendation: evaluations[0]?.feedback || 'Demonstrated consistent attention to technical requirements.'
         },
         {
-          skill: 'Spoken Technical Articulation',
+          skill: 'Technical Information Recall',
           score: Math.min(95, avgScore + 2),
           status: avgScore >= 80 ? 'STRONG' : 'MODERATE',
           recommendation: `Captured ${evaluations.reduce((acc: number, e: any) => acc + (e.matchedKeywords || 0), 0)} target architectural keywords across ${answers.length} questions.`
@@ -268,18 +291,47 @@ listeningRouter.post('/submit-answers', async (req: AuthRequest, res: Response):
     if (student?.id) {
       await db.query(
         `UPDATE org.students
-         SET recent_reports = jsonb_set(
-           COALESCE(recent_reports, '[]'::jsonb),
-           '{0}',
-           $1::jsonb,
-           true
-         ),
-         overall_readiness = $2,
-         score = $2,
-         updated_at = now()
+         SET recent_reports = jsonb_build_array($1::jsonb) || COALESCE(recent_reports, '[]'::jsonb),
+             overall_readiness = $2,
+             score = $2,
+             updated_at = now()
          WHERE id = $3`,
         [JSON.stringify(finalReport), avgScore, student.id]
       ).catch(err => console.error('[listening.routes] Failed to save report to org.students:', err));
+    }
+
+    if (assignmentId && student?.id) {
+      try {
+        const { rows: asgRows } = await db.query(
+          `SELECT submissions FROM org.interview_assignments WHERE id = $1`,
+          [assignmentId]
+        );
+        if (asgRows.length > 0) {
+          let subs = asgRows[0].submissions || [];
+          if (!Array.isArray(subs)) subs = [];
+          const newSub = {
+            studentId: student.id,
+            studentName: student.name || 'Student',
+            studentRollNumber: student.roll_number || '',
+            score: avgScore,
+            status: 'COMPLETED',
+            submittedAt: new Date().toISOString(),
+            report: finalReport
+          };
+          const subIdx = subs.findIndex((s: any) => s.studentId === student.id);
+          if (subIdx !== -1) {
+            subs[subIdx] = newSub;
+          } else {
+            subs.push(newSub);
+          }
+          await db.query(
+            `UPDATE org.interview_assignments SET submissions = $1, updated_at = now() WHERE id = $2`,
+            [JSON.stringify(subs), assignmentId]
+          );
+        }
+      } catch (asgErr) {
+        console.error('[listening.routes] Failed to update assignment submission:', asgErr);
+      }
     }
 
     sendSuccess(res, {

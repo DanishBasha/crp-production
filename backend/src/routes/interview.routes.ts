@@ -14,6 +14,8 @@ export const interviewRouter = Router();
 const startLiveSessionSchema = z.object({
   sessionType: z.literal('MOCK_INTERVIEW').default('MOCK_INTERVIEW'),
   topic: z.string().optional(),
+  assignmentId: z.string().optional(),
+  interviewMode: z.enum(['RESUME_BASED', 'TOPIC']).optional(),
   resume: z.object({
     skills: z.array(z.string().max(80)).max(40).optional(),
     projects: z.array(z.object({
@@ -31,7 +33,13 @@ interviewRouter.post('/sessions', async (req: AuthRequest, res: Response): Promi
     if (!parsed.success) {
       throw new AppError(422, 'Only MOCK_INTERVIEW sessions can be started here', 'VALIDATION_ERROR');
     }
-    const session = await startLiveInterview(req.user!.id, parsed.data.resume, parsed.data.topic);
+    const session = await startLiveInterview(
+      req.user!.id,
+      parsed.data.resume,
+      parsed.data.topic,
+      parsed.data.assignmentId,
+      parsed.data.interviewMode
+    );
     console.log(`[interview] Live session started sessionId=${session.sessionId} attemptId=${session.attemptId}`);
     sendSuccess(res, session, 201);
   } catch (err) {
