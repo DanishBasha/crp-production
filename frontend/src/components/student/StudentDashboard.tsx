@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { ResumeUploadModal } from './ResumeUploadModal';
 import { useBackHandler } from '../../hooks/useBackHandler';
+import { useRoadmap, addRoadmapToSavedChecklist } from '../../hooks/useRoadmap';
 import { isAssignmentElapsed } from '../common/AssessmentMonitoringWidget';
 
 export const StudentDashboard: React.FC = () => {
@@ -377,6 +378,19 @@ export const StudentDashboard: React.FC = () => {
       } catch {}
     }
   }, [latestReport?.id, student.id]);
+
+  // The 4-week roadmap built from the latest interview joins the checklist once it is ready
+  const {
+    roadmap,
+    current: roadmapState,
+    rebuild: rebuildRoadmap,
+    rebuilding: roadmapRebuilding,
+  } = useRoadmap(student.id, latestReport?.id);
+  useEffect(() => {
+    if (!roadmap) return;
+    const updated = addRoadmapToSavedChecklist(student.id || 'stu-candidate', roadmap.id, roadmap.data, checklist);
+    if (updated) setChecklist(updated);
+  }, [roadmap?.id, student.id]);
 
   // Calculate Overall Readiness %: Strictly depends ONLY on the Post-Interview Checklist
   const totalChecklistCount = checklist.length;
@@ -1571,6 +1585,25 @@ export const StudentDashboard: React.FC = () => {
                 </span>
               )}
             </div>
+            {roadmapState?.status === 'GENERATING' && (
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 flex items-center gap-1.5">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                Building your 4-week roadmap from your latest interview — it will be added to this checklist.
+              </p>
+            )}
+            {(roadmapState?.status === 'FAILED' || roadmapState?.status === 'MISSING') && (
+              <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
+                Your 4-week roadmap could not be built.{' '}
+                <button
+                  type="button"
+                  onClick={() => void rebuildRoadmap()}
+                  disabled={roadmapRebuilding}
+                  className="underline font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  {roadmapRebuilding ? 'Starting…' : 'Try again'}
+                </button>
+              </p>
+            )}
           </div>
 
           <div className="flex items-center space-x-3">

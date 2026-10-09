@@ -171,6 +171,136 @@ learningRouter.get('/plans/:studentId', async (req: AuthRequest, res: Response):
   }
 });
 
+// ── The student's current 4-week roadmap, built by the agent after each mock interview ──
+
+// A run older than this that never finished is treated as dead, not "building"
+const PLAN_RUN_STALE_MS = 10 * 60 * 1000;
+// Right after an interview the agent run may not exist yet (it is started by an event)
+const PLAN_TRIGGER_GRACE_MS = 2 * 60 * 1000;
+const MAX_PLAN_REBUILDS_PER_HOUR = 5;
+
+interface PlanRow {
+  id: string; plan_data: Record<string, unknown> | null;
+  source_attempt_id: string | null; version: number | null; created_at: Date;
+}
+interface RunRow { id: string; status: string; termination_reason: string | null; created_at: Date }
+
+async function latestPlanRun(studentId: string): Promise<RunRow | null> {
+  const { rows } = await db.query<RunRow>(
+    `SELECT ar.id, ar.status, ar.termination_reason, ar.created_at
+     FROM agent.agent_runs ar
+     JOIN agent.agent_definitions ad ON ad.id = ar.agent_definition_id
+     WHERE ar.student_id = $1 AND ad.name = 'learning_readiness_agent'
+     ORDER BY ar.created_at DESC LIMIT 1`,
+    [studentId]
+  );
+  return rows[0] ?? null;
+}
+
+const isRunActive = (run: RunRow | null): boolean =>
+  !!run && ['QUEUED', 'RUNNING'].includes(run.status) && Date.now() - new Date(run.created_at).getTime() < PLAN_RUN_STALE_MS;
+
+learningRouter.get('/plans/:studentId/current', async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const studentId = req.params.studentId as string;
+    await assertStudentScope(req, studentId);
+
+    const [{ rows: planRows }, { rows: interviewRows }, run] = await Promise.all([
+      db.query<PlanRow>(
+        `SELECT id, plan_data, source_attempt_id, version, created_at
+         FROM performance.learning_plans WHERE student_id = $1
+         ORDER BY created_at DESC LIMIT 1`,
+        [studentId]
+      ),
+      db.query<{ attempt_id: string; created_at: Date }>(
+        `SELECT attempt_id, created_at FROM performance.assessment_reports
+         WHERE student_id = $1 AND report_data IS NOT NULL
+         ORDER BY created_at DESC LIMIT 1`,
+        [studentId]
+      ),
+      latestPlanRun(studentId),
+    ]);
+    const plan = planRows[0] ?? null;
+    const interview = interviewRows[0] ?? null;
+
+    // The roadmap is current when it was built from (or after) the latest interview
+    const planIsCurrent = !!plan && (!interview
+      || plan.source_attempt_id === interview.attempt_id
+      || new Date(plan.created_at) > new Date(interview.created_at));
+    const runAfterInterview = !!run && !!interview && new Date(run.created_at) >= new Date(interview.created_at);
+
+    let status: 'NO_INTERVIEW' | 'GENERATING' | 'READY' | 'FAILED' | 'MISSING';
+    if (isRunActive(run)) status = 'GENERATING';
+    else if (planIsCurrent) status = 'READY';
+    else if (!interview) status = 'NO_INTERVIEW';
+    else if (runAfterInterview && ['FAILED', 'DEAD'].includes(run!.status)) status = 'FAILED';
+    else if (Date.now() - new Date(interview.created_at).getTime() < PLAN_TRIGGER_GRACE_MS) status = 'GENERATING';
+    else status = 'MISSING';
+
+    sendSuccess(res, {
+      status,
+      plan: plan && {
+        id: plan.id,
+        data: plan.plan_data,
+        sourceAttemptId: plan.source_attempt_id,
+        version: plan.version,
+        createdAt: plan.created_at,
+        isCurrent: planIsCurrent,
+      },
+      latestInterviewAt: interview?.created_at ?? null,
+    });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// Builds a fresh roadmap from the latest interview (e.g. after a failed build)
+learningRouter.post('/plans/:studentId/rebuild', async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const studentId = req.params.studentId as string;
+    await assertStudentScope(req, studentId);
+
+    const { rows: interviewRows } = await db.query(
+      `SELECT 1 FROM performance.assessment_reports
+       WHERE student_id = $1 AND report_data IS NOT NULL LIMIT 1`,
+      [studentId]
+    );
+    if (interviewRows.length === 0) {
+      throw new AppError(409, 'Take a mock interview first — the roadmap is built from it', 'NO_INTERVIEW');
+    }
+    if (isRunActive(await latestPlanRun(studentId))) {
+      throw new AppError(409, 'Your roadmap is already being built', 'PLAN_IN_PROGRESS');
+    }
+    const { rows: recent } = await db.query<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM agent.agent_runs ar
+       JOIN agent.agent_definitions ad ON ad.id = ar.agent_definition_id
+       WHERE ar.student_id = $1 AND ad.name = 'learning_readiness_agent'
+         AND ar.created_at > now() - interval '1 hour'`,
+      [studentId]
+    );
+    if (parseInt(recent[0]?.n ?? '0', 10) >= MAX_PLAN_REBUILDS_PER_HOUR) {
+      throw new AppError(429, 'You have rebuilt your roadmap several times this hour — try again later', 'TOO_MANY_REBUILDS');
+    }
+
+    const resp = await axios.post(
+      `${env.AI_SERVICE_URL}/agent/run`,
+      {
+        student_id: studentId,
+        goal: 'Improve technical skills, communication skills, and interview readiness',
+        triggered_by_user_id: req.user!.id,
+      },
+      { timeout: 10_000, headers: { 'X-Internal-Key': env.AI_INTERNAL_KEY } }
+    );
+    sendSuccess(res, { agentRunId: resp.data.run_id as string }, 202);
+  } catch (err) {
+    if (err && typeof err === 'object' && 'isAxiosError' in err) {
+      sendError(res, new AppError(503, 'The roadmap service is unavailable — try again shortly', 'AGENT_UNAVAILABLE'));
+      return;
+    }
+    sendError(res, err);
+  }
+});
+
 learningRouter.get('/recommendations/:studentId', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const studentId = req.params.studentId as string;

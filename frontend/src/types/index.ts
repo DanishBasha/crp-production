@@ -222,6 +222,45 @@ export interface ImprovementChecklistItem {
   completedAt?: string;
 }
 
+// ── Post-interview 4-week roadmap (built by the learning-plan agent from the interview) ──
+
+export interface RoadmapTask { id: string; text: string }
+export interface RoadmapDay { day: number; title: string; minutes: number; tasks: RoadmapTask[] }
+
+export interface RoadmapWeek {
+  week: number;
+  kind?: 'topic' | 'delivery' | 'projects' | 'depth' | 'simulation';
+  title?: string;
+  focus: string;
+  objective: string;
+  days?: RoadmapDay[];
+  checkpoint?: { id: string; task: string; passIf: string };
+  // Roadmaps built without an interview report list activities instead of days
+  activities?: string[];
+  measurableOutcome?: string;
+  estimatedHours?: number;
+}
+
+export interface RoadmapData {
+  headline?: string;
+  summary?: string;
+  weeklyPlan: RoadmapWeek[];
+}
+
+export type RoadmapStatus = 'NO_INTERVIEW' | 'GENERATING' | 'READY' | 'FAILED' | 'MISSING';
+
+export interface CurrentRoadmap {
+  status: RoadmapStatus;
+  plan: {
+    id: string;
+    data: RoadmapData | null;
+    sourceAttemptId: string | null;
+    createdAt: string;
+    isCurrent: boolean;
+  } | null;
+  latestInterviewAt: string | null;
+}
+
 export interface StudentProfile {
   id: string;
   name: string;

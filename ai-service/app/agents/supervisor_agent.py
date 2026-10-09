@@ -7,9 +7,11 @@ from typing import Any
 from app.agents.specialist_agent import run_specialist_agent
 from app.repositories import agent_repository, learning_repository
 from app.tools.base import ToolContext
+from app.tools.interview_evidence import GetInterviewEvidenceTool
 from app.tools.performance import GetStudentPerformanceTool
 
 _perf_tool = GetStudentPerformanceTool()
+_evidence_tool = GetInterviewEvidenceTool()
 
 
 def run_supervisor_agent(
@@ -55,15 +57,40 @@ def run_supervisor_agent(
         flush=True,
     )
 
-    # ── Step 3 (DECISION): DELEGATE_TO_SPECIALIST ─────────────────────────────
-    print(f"[supervisor] BEFORE_step3 supervisorRunId={supervisor_run_id}", flush=True)
+    # ── Step 3 (TOOL): GetInterviewEvidence — direct call, no LLM ────────────
+    # The latest mock interview (questions, scores, missed key points, delivery
+    # metrics) plus the resume: the evidence the 4-week plan is built from.
+    agent_repository.insert_running_tool_step(
+        supervisor_run_id, 3, "GetInterviewEvidence",
+        json.dumps({"studentId": student_id}),
+    )
+    ev_start = time.time()
+    ev_result = _evidence_tool.execute({"studentId": student_id}, perf_ctx)
+    ev_ms = int((time.time() - ev_start) * 1000)
+    agent_repository.update_tool_step(
+        supervisor_run_id, 3,
+        json.dumps({"summary": ev_result.context_summary, "attemptId": (ev_result.data or {}).get("attemptId")})
+        if ev_result.success else None,
+        "COMPLETED" if ev_result.success else "FAILED",
+        ev_result.error_code if not ev_result.success else None,
+        ev_result.error_message if not ev_result.success else None,
+        ev_ms,
+    )
+    interview_evidence = ev_result.data if ev_result.success else None
+    print(
+        f"[supervisor] step3 GetInterviewEvidence supervisorRunId={supervisor_run_id}"
+        f" found={interview_evidence is not None} {ev_result.context_summary or ev_result.error_code}",
+        flush=True,
+    )
+
+    # ── Step 4 (DECISION): DELEGATE_TO_SPECIALIST ─────────────────────────────
     agent_repository.upsert_completed_step(
-        supervisor_run_id, 3, "DECISION", None,
+        supervisor_run_id, 4, "DECISION", None,
         json.dumps({"decision": "DELEGATE_TO_SPECIALIST"}),
-        json.dumps({"reason": "learning plan requires specialist analysis"}),
+        json.dumps({"reason": "learning plan requires specialist analysis",
+                    "interviewEvidence": interview_evidence is not None}),
         "COMPLETED", None, None, 0,
     )
-    print(f"[supervisor] AFTER_step3 supervisorRunId={supervisor_run_id}", flush=True)
 
     print(
         f"[supervisor] DELEGATE_TO_SPECIALIST"
@@ -77,6 +104,7 @@ def run_supervisor_agent(
             "goal": goal,
             "supervisorRunId": supervisor_run_id,
             "triggeredByUserId": triggered_by_user_id,
+            "interviewEvidence": interview_evidence,
         },
         spec_def,
     )
@@ -91,9 +119,9 @@ def run_supervisor_agent(
     if not specialist_result.get("draft_plan"):
         raise RuntimeError("Specialist failed to produce a learning plan")
 
-    # ── Step 4 (DECISION): PERSIST_PLAN ──────────────────────────────────────
+    # ── Step 5 (DECISION): PERSIST_PLAN ──────────────────────────────────────
     agent_repository.upsert_completed_step(
-        supervisor_run_id, 4, "DECISION", None,
+        supervisor_run_id, 5, "DECISION", None,
         json.dumps({"decision": "PERSIST_PLAN"}),
         json.dumps({"specialistRunId": specialist_result["specialist_run_id"]}),
         "COMPLETED", None, None, 0,
@@ -105,19 +133,23 @@ def run_supervisor_agent(
     if existing_plan:
         learning_plan = existing_plan
     else:
+        draft_plan = specialist_result["draft_plan"]
         learning_plan = learning_repository.create_learning_plan(
             student_id=student_id,
             agent_run_id=supervisor_run_id,
             goal=goal,
-            plan_data_json_str=json.dumps(specialist_result["draft_plan"]),
+            plan_data_json_str=json.dumps(draft_plan),
+            source_attempt_id=draft_plan.get("sourceAttemptId"),
         )
         for ws in specialist_result.get("weak_skills") or []:
-            skill_id = ws.get("skill_id") or str(ws.get("skill_id", ""))
+            skill_id = ws.get("skill_id")
+            if not skill_id:
+                continue  # interview topics are not catalogued skills
             name = ws.get("name", "Unknown skill")
             learning_repository.create_recommendation(
                 student_id=student_id,
                 plan_id=learning_plan["id"],
-                skill_id=skill_id,
+                skill_id=str(skill_id),
                 title=f"Improve: {name}",
             )
 

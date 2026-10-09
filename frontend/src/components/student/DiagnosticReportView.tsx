@@ -1,17 +1,38 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import { 
-  ArrowLeft, 
-  Activity, 
+import { useRoadmap, addRoadmapToSavedChecklist } from '../../hooks/useRoadmap';
+import {
+  ArrowLeft,
+  Activity,
   Mic,
   AlertTriangle,
   ShieldAlert,
   Ban,
-  ListChecks
+  ListChecks,
+  Calendar,
+  RefreshCw
 } from 'lucide-react';
 
 export const DiagnosticReportView: React.FC = () => {
-  const { latestReport, setActiveView } = useApp();
+  const { latestReport, setActiveView, student } = useApp();
+
+  // After a mock interview the agent builds a 4-week roadmap from it
+  const showRoadmap = !!latestReport
+    && latestReport.sessionType !== 'LISTENING_COMPREHENSION'
+    && !(latestReport.isDisqualified || latestReport.tabSwitches >= 4);
+  const {
+    current: roadmapState,
+    roadmap,
+    loading: roadmapLoading,
+    error: roadmapError,
+    rebuild: rebuildRoadmap,
+    rebuilding: roadmapRebuilding,
+  } = useRoadmap(showRoadmap ? student?.id : undefined, latestReport?.id);
+
+  // ...and the roadmap is added to the dashboard's Post-Interview Improvement Checklist
+  useEffect(() => {
+    if (roadmap && student?.id) addRoadmapToSavedChecklist(student.id, roadmap.id, roadmap.data);
+  }, [roadmap?.id, student?.id]);
 
   if (!latestReport) return null;
 
@@ -234,6 +255,84 @@ export const DiagnosticReportView: React.FC = () => {
               <li key={idx}>{step}</li>
             ))}
           </ol>
+        </div>
+      )}
+
+      {showRoadmap && (roadmapState ? roadmapState.status !== 'NO_INTERVIEW' : roadmapLoading && !roadmapError) && (
+        <div className="bg-white border border-neutral-200/90 rounded-2xl p-6 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="flex items-center space-x-2">
+              <Calendar className="w-4 h-4 text-neutral-700" />
+              <h3 className="text-sm font-semibold tracking-tight text-neutral-900">Your 4-Week Roadmap</h3>
+            </div>
+            {roadmap && (
+              <span className="text-[11px] font-medium text-emerald-700">
+                Added to your Post-Interview Improvement Checklist
+              </span>
+            )}
+          </div>
+
+          {roadmap ? (
+            <>
+              {roadmap.data.summary && (
+                <p className="text-xs text-neutral-600 leading-relaxed">{roadmap.data.summary}</p>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {roadmap.data.weeklyPlan.map((week, wIdx) => (
+                  <div key={week.week ?? wIdx} className="p-4 bg-neutral-50 border border-neutral-200/70 rounded-xl space-y-2 min-w-0">
+                    <div className="flex items-start gap-2">
+                      <span className="shrink-0 px-2 py-0.5 rounded text-[10px] font-bold bg-neutral-900 text-white font-mono">
+                        Week {week.week ?? wIdx + 1}
+                      </span>
+                      <span className="text-xs font-semibold text-neutral-900">{week.title || week.focus}</span>
+                    </div>
+                    {week.objective && (
+                      <p className="text-[11px] text-neutral-600 leading-relaxed">{week.objective}</p>
+                    )}
+                    {week.days && week.days.length > 0 ? (
+                      <ul className="space-y-1 text-[11px] text-neutral-700">
+                        {week.days.map(day => (
+                          <li key={day.day}>
+                            <span className="font-mono text-neutral-400">Day {day.day}</span> · {day.title}
+                            {day.minutes ? <span className="text-neutral-400"> ({day.minutes} min)</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <ul className="list-disc list-inside space-y-1 text-[11px] text-neutral-700">
+                        {(week.activities ?? []).map((activity, aIdx) => (
+                          <li key={aIdx}>{activity}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {week.checkpoint?.task && (
+                      <p className="text-[11px] text-emerald-800 leading-relaxed">
+                        <span className="font-semibold">Checkpoint:</span> {week.checkpoint.task}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : roadmapState?.status === 'FAILED' || roadmapState?.status === 'MISSING' ? (
+            <p className="text-xs text-amber-700">
+              Your roadmap could not be built.{' '}
+              <button
+                type="button"
+                onClick={() => void rebuildRoadmap()}
+                disabled={roadmapRebuilding}
+                className="underline font-semibold cursor-pointer disabled:opacity-50"
+              >
+                {roadmapRebuilding ? 'Starting…' : 'Try again'}
+              </button>
+            </p>
+          ) : (
+            <p className="text-xs text-neutral-500 flex items-center gap-2">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+              Building your personalised 4-week roadmap from this interview. It usually takes about a minute and
+              will appear here and in your Post-Interview Improvement Checklist.
+            </p>
+          )}
         </div>
       )}
 

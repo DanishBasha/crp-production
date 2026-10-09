@@ -24,15 +24,26 @@ def create_learning_plan(
     agent_run_id: str,
     goal: str,
     plan_data_json_str: str,
+    source_attempt_id: str | None = None,
 ) -> dict[str, Any]:
+    # The newest plan is the student's active one; earlier plans stay as history
+    execute_write(
+        """
+        UPDATE performance.learning_plans SET status = 'SUPERSEDED', updated_at = now()
+        WHERE student_id = %s AND status = 'ACTIVE'
+        """,
+        [student_id],
+    )
     rows = execute_returning(
         """
         INSERT INTO performance.learning_plans
-          (student_id, generated_by_agent_run_id, goal, plan_data, status, version)
-        VALUES (%s, %s, %s, %s::jsonb, 'ACTIVE', 1)
+          (student_id, generated_by_agent_run_id, goal, plan_data, status, version, source_attempt_id)
+        VALUES (%s, %s, %s, %s::jsonb, 'ACTIVE',
+                COALESCE((SELECT MAX(version) FROM performance.learning_plans WHERE student_id = %s), 0) + 1,
+                %s)
         RETURNING *
         """,
-        [student_id, agent_run_id, goal, plan_data_json_str],
+        [student_id, agent_run_id, goal, plan_data_json_str, student_id, source_attempt_id],
     )
     return rows[0]
 

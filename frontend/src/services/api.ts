@@ -14,7 +14,8 @@ import {
   AdminPermission,
   AuthUser,
   DepartmentClass,
-  DepartmentStaffMember
+  DepartmentStaffMember,
+  CurrentRoadmap
 } from '../types';
 import { 
   MOCK_INTERVIEW_QUESTIONS, 
@@ -1766,6 +1767,17 @@ class ApiClient {
         }
       );
       return res.data;
+    },
+  };
+
+  // The 4-week roadmap the learning-plan agent builds after each mock interview
+  learning = {
+    getCurrentRoadmap: async (studentId: string): Promise<CurrentRoadmap> => {
+      const res = await this._fetch<{ data: CurrentRoadmap }>(`/learning/plans/${encodeURIComponent(studentId)}/current`);
+      return res.data;
+    },
+    rebuildRoadmap: async (studentId: string): Promise<void> => {
+      await this._fetch(`/learning/plans/${encodeURIComponent(studentId)}/rebuild`, { method: 'POST' });
     },
   };
 
