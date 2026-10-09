@@ -14,6 +14,7 @@ export interface AudioStartMeta {
 interface DeepgramSession {
   socket: any;
   transcript: string;
+  interim: string;    // words of the segment Deepgram has not finalised yet
   triggered: boolean; // prevent double-trigger on UtteranceEnd
   meta: AudioStartMeta;
   pendingChunks: Buffer[]; // audio buffered before socket opens
@@ -21,6 +22,11 @@ interface DeepgramSession {
 }
 
 const sessions = new Map<string, DeepgramSession>();
+
+// Everything heard so far: the finalised text plus the segment still in progress, so an
+// answer is never lost because Deepgram had not finalised its last words yet.
+const heardText = (session: DeepgramSession): string =>
+  [session.transcript, session.interim].filter(Boolean).join(' ').trim();
 
 type EagerEndCallback = (transcript: string, meta: AudioStartMeta) => Promise<void>;
 
@@ -62,7 +68,7 @@ export async function openSession(
     return;
   }
 
-  const session: DeepgramSession = { socket, transcript: '', triggered: false, meta, pendingChunks: [], isOpen: false };
+  const session: DeepgramSession = { socket, transcript: '', interim: '', triggered: false, meta, pendingChunks: [], isOpen: false };
   sessions.set(sessionId, session);
 
   socket.on('open', () => {
@@ -78,10 +84,16 @@ export async function openSession(
   socket.on('message', async (msg: any) => {
     if (msg?.type === 'Results') {
       const words: string = msg?.channel?.alternatives?.[0]?.transcript ?? '';
-      if (!words) return;
+      if (!words) {
+        if (msg.is_final) session.interim = ''; // the pending segment was finalised as silence
+        return;
+      }
 
       if (msg.is_final) {
         session.transcript += (session.transcript ? ' ' : '') + words;
+        session.interim = '';
+      } else {
+        session.interim = words;
       }
 
       wsManager.emit(sessionId, {
@@ -98,7 +110,7 @@ export async function openSession(
       await new Promise((resolve) => setTimeout(resolve, 400));
 
       // May be empty — the caller decides how to handle a silent turn
-      const finalTranscript = session.transcript.trim();
+      const finalTranscript = heardText(session);
       console.log(`[Deepgram] UtteranceEnd  session=${sessionId}  "${finalTranscript.slice(0, 80)}"`);
 
       try {
@@ -114,7 +126,9 @@ export async function openSession(
   });
 
   socket.on('close', () => {
-    sessions.delete(sessionId);
+    // The previous answer's stream often finishes closing after the next answer's stream
+    // has opened; only forget this stream, never the newer one (that dropped the audio).
+    if (sessions.get(sessionId) === session) sessions.delete(sessionId);
     console.log(`[Deepgram] session closed  session=${sessionId}`);
   });
 
@@ -145,5 +159,5 @@ export function closeSession(sessionId: string): string {
     session.socket.sendCloseStream({});
   } catch {}
   sessions.delete(sessionId);
-  return session.transcript.trim();
+  return heardText(session);
 }
