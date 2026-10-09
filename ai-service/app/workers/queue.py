@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.cache.redis_client import get_redis
 
 _QUEUE_NAME = "agent_jobs"
-_JOB_TIMEOUT = 300  # seconds — safe upper bound for one full agent run
+_JOB_TIMEOUT = 420  # seconds — tool loop (≤150 s) + plan enrichment (≤90 s) + web searches, with headroom
 
 
 def get_job_queue():

@@ -51,6 +51,7 @@ export async function handleAttemptCompleted(payload: AttemptCompletedPayload): 
   } = payload;
 
   const client = await db.connect();
+  let committed = false;
   try {
     await client.query('BEGIN');
 
@@ -131,6 +132,10 @@ export async function handleAttemptCompleted(payload: AttemptCompletedPayload): 
         [studentId, technicalScore ?? null, communicationScore ?? null, listeningScore ?? null, overallScore]
       );
       await client.query('COMMIT');
+      committed = true;
+      // A first interview (e.g. an account with no profile yet) still gets its roadmap
+      invalidateStudentCache(studentId);
+      triggerModule3Agent(studentId, payload.goal, payload.attemptId);
       return;
     }
 
@@ -166,6 +171,7 @@ export async function handleAttemptCompleted(payload: AttemptCompletedPayload): 
     );
 
     await client.query('COMMIT');
+    committed = true;
 
     // Fire-and-forget: invalidate the Module 3 Redis cache for this student.
     // Runs AFTER the transaction commits so stale data is never served.
@@ -178,6 +184,10 @@ export async function handleAttemptCompleted(payload: AttemptCompletedPayload): 
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('[module3] ATTEMPT_COMPLETED error:', err);
+    // The roadmap is built from the stored interview report, so it does not depend on the
+    // snapshot above (which fails e.g. for an independent candidate without a program).
+    // After a commit the roadmap was already requested above.
+    if (!committed) triggerModule3Agent(studentId, payload.goal, payload.attemptId);
   } finally {
     client.release();
   }

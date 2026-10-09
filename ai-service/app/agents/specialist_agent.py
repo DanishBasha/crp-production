@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from app.agents.agent_loop import run_agent_loop
+from app.agents.interview_plan import build_interview_plan, diagnose
 from app.agents.prompts import get_specialist_system_prompt
 from app.agents.state import AgentLoopConfig, AgentLoopResult, AgentMetrics, TerminationReason
 from app.config import LEARNING_PLAN_DURATION_WEEKS
@@ -45,8 +46,18 @@ def run_specialist_agent(
         supervisor_run_id=supervisor_run_id,
     )
 
+    # The latest mock interview, gathered by the supervisor (None when there is none)
+    interview_evidence: dict[str, Any] | None = task.get("interviewEvidence")
+    interview_gaps = _interview_gap_skills(interview_evidence)
+
     system_prompt = get_specialist_system_prompt(student_id, goal)
     user_message = f"Create a learning plan for student {student_id}. Goal: {goal}"
+    if interview_gaps:
+        names = ", ".join(f"{g['name']} ({g['avg_score']}/100)" for g in interview_gaps[:4])
+        user_message += (
+            f" Latest mock interview — weakest areas: {names}. "
+            "If GetSkillGapAnalysis returns no weak skills, pass these area names as skills to SearchWebResources."
+        )
 
     loop_config = AgentLoopConfig(
         agent_run_id=specialist_run_id,
@@ -97,7 +108,8 @@ def run_specialist_agent(
     #   2. Trigger SearchWebResources if the LLM skipped it (ensures the plan
     #      always has external resources when internal content is insufficient).
     knowledge_docs_list = (knowledge_data or {}).get("documents") or []
-    gap_skills_list     = (gap_data or {}).get("weakSkills") or []
+    # Interview topics stand in when the skill catalogue has no measured gaps
+    gap_skills_list     = (gap_data or {}).get("weakSkills") or interview_gaps
     web_called          = "SearchWebResources" in loop_result.tool_results
 
     relevant_internal = _is_knowledge_relevant(knowledge_docs_list, gap_skills_list)
@@ -209,7 +221,17 @@ def run_specialist_agent(
     combined_metrics = loop_result.metrics
     plan_data: dict[str, Any] | None = None
 
-    if draft_ctx.get("_ready_for_generation"):
+    if interview_evidence:
+        # Built from the interview itself; runs even when the tool loop stopped
+        # early, so every completed interview ends with a plan.
+        plan_data = build_interview_plan(
+            interview_evidence,
+            goal,
+            llm=get_llm_client(),
+            web_resources=(web_data or {}).get("webResources") or [],
+            knowledge_docs=(knowledge_data or {}).get("documents") or [],
+        )
+    elif draft_ctx.get("_ready_for_generation"):
         # Inject exact search result URLs — _resolve_resource_url needs them
         # to restore abbreviated URLs that the LLM may have shortened.
         exact_web = (web_data or {}).get("webResources") or []
@@ -426,6 +448,21 @@ def _generate_plan(
 
     # All attempts exhausted without exception (validation failed every time)
     return None
+
+
+def _interview_gap_skills(evidence: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Interview topics scoring under 70, weakest first, shaped like GetSkillGapAnalysis rows."""
+    if not evidence:
+        return []
+    try:
+        areas = diagnose(evidence)["areas"]
+    except Exception as exc:  # a malformed report must not stop the plan
+        print(f"[specialist] interview diagnosis failed ({type(exc).__name__}: {exc})", flush=True)
+        return []
+    return [
+        {"skill_id": None, "name": a["name"], "category": "INTERVIEW", "avg_score": a["score"]}
+        for a in areas if a["score"] < 70
+    ]
 
 
 # ── Resource relevance ────────────────────────────────────────────────────────
