@@ -36,8 +36,8 @@ async function fetchStudentProfile(identifier: string) {
       u.name,
       u.email,
       s.roll_number AS "rollNumber",
-      COALESCE(u.institution_id, p.institution_id, pb.institution_id) AS "collegeId",
-      COALESCE(inst.name, 'Main Institution') AS "collegeName",
+      CASE WHEN (ic.id IS NOT NULL OR u.institution_id IS NULL) THEN NULL ELSE COALESCE(u.institution_id, p.institution_id, pb.institution_id) END AS "collegeId",
+      CASE WHEN (ic.id IS NOT NULL OR u.institution_id IS NULL) THEN NULL ELSE COALESCE(inst.name, 'Main Institution') END AS "collegeName",
       COALESCE(s.department, 'General Department') AS department,
       COALESCE(s.batch_year, 2026) AS "batchYear",
       COALESCE(s.class_name, '') AS "className",
@@ -54,10 +54,12 @@ async function fetchStudentProfile(identifier: string) {
       COALESCE(s.recent_reports, '[]'::jsonb) AS "recentReports",
       COALESCE(s.overall_readiness, 75) AS "overallReadiness",
       COALESCE(s.overall_readiness, 75) AS score,
-      COALESCE(s.coins, 5) AS coins,
+      (ic.id IS NOT NULL OR u.institution_id IS NULL) AS "isIndependent",
+      CASE WHEN (ic.id IS NOT NULL OR u.institution_id IS NULL) THEN 999 ELSE COALESCE(s.coins, 5) END AS coins,
       s.created_at AS "createdAt"
     FROM org.students s
     JOIN identity.users u ON u.id = s.user_id
+    LEFT JOIN candidate.independent_candidates ic ON ic.user_id = u.id
     LEFT JOIN org.programs p ON p.id = s.program_id
     LEFT JOIN org.batches b ON b.id = s.batch_id
     LEFT JOIN org.programs pb ON pb.id = b.program_id
@@ -79,11 +81,7 @@ async function fetchStudentProfile(identifier: string) {
     );
     if (uRows.length > 0) {
       const u = uRows[0];
-      let instId = u.institution_id;
-      if (!instId) {
-        const { rows: insts } = await db.query(`SELECT id FROM org.institutions ORDER BY created_at DESC LIMIT 1`);
-        instId = insts[0]?.id;
-      }
+      const instId = u.institution_id;
       let programId: string | null = null;
       let batchId: string | null = null;
       if (instId) {
@@ -108,12 +106,13 @@ async function fetchStudentProfile(identifier: string) {
           batchId = newBatch[0].id;
         }
       }
+      const initialCoins = instId ? 5 : 999;
       const roll = `STU${Date.now().toString(36).toUpperCase().slice(-6)}`;
       const { rows: newStu } = await db.query(
-        `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track)
-         VALUES ($1, $2, $3, $4, 'General Department', 2026, 'General Track')
+        `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track, coins)
+         VALUES ($1, $2, $3, $4, $5, 2026, 'General Track', $6)
          RETURNING id`,
-        [u.id, programId, batchId, roll]
+        [u.id, programId, batchId, roll, instId ? 'General Department' : 'Self-Paced Learning', initialCoins]
       );
       if (newStu.length > 0) {
         return fetchStudentProfile(newStu[0].id);

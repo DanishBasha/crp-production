@@ -1195,13 +1195,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
-    const currentCoins = student.coins ?? 5;
-    const safeCoins = currentCoins < 1 ? 5 : currentCoins;
-    if (currentCoins < 1) {
+    const isIndep = Boolean(student.isIndependent || currentUser?.isIndependent);
+    const currentCoins = student.coins ?? (isIndep ? 999 : 5);
+    const safeCoins = isIndep ? 999 : (currentCoins < 1 ? 5 : currentCoins);
+    if (!isIndep && currentCoins < 1) {
       setStudent(prev => ({ ...prev, coins: 5 }));
     }
 
-    setSessionCoinAtStake(true);
+    setSessionCoinAtStake(!isIndep);
 
     try {
       if (typeof document !== 'undefined' && !document.fullscreenElement && document.documentElement.requestFullscreen) {
@@ -1216,16 +1217,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const data = await api.interview.start(student.id || 'stu-21cs1084', type, targetTopic, student.resume);
-      const remainingCoins = typeof data.coinsRemaining === 'number' ? data.coinsRemaining : Math.max(0, safeCoins - 1);
+      const isCandidateIndep = Boolean(student.isIndependent || currentUser?.isIndependent);
+      const remainingCoins = isCandidateIndep
+        ? 999
+        : (typeof data.coinsRemaining === 'number' ? data.coinsRemaining : Math.max(0, safeCoins - 1));
       const sKey = student.id || 'stu-21cs1084';
-      try {
-        localStorage.setItem(`crp_student_coins_${sKey}`, String(remainingCoins));
-      } catch {}
-      setStudent(prev => ({ 
-        ...prev, 
-        coins: remainingCoins,
-        zeroCoinsAt: remainingCoins === 0 ? new Date().toISOString() : undefined
-      }));
+      if (!isCandidateIndep) {
+        try {
+          localStorage.setItem(`crp_student_coins_${sKey}`, String(remainingCoins));
+        } catch {}
+        setStudent(prev => ({ 
+          ...prev, 
+          coins: remainingCoins,
+          zeroCoinsAt: remainingCoins === 0 ? new Date().toISOString() : undefined
+        }));
+      } else {
+        setStudent(prev => ({ 
+          ...prev, 
+          coins: 999,
+          zeroCoinsAt: undefined
+        }));
+      }
 
       setInterviewState({
         isActive: true,

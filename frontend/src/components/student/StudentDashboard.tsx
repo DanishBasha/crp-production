@@ -825,58 +825,26 @@ export const StudentDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* 0 Credits Alert Banner in Assignments View */}
-        {(student.coins ?? 5) === 0 && (
-          isIndependent ? (
-            <div className="bg-gradient-to-r from-amber-950 via-neutral-900 to-amber-900 border border-amber-600/70 rounded-2xl p-5 shadow-lg text-white space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-start space-x-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center shrink-0 mt-0.5">
-                    <CreditCard className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <h3 className="text-sm font-bold text-amber-300">0 Credits Available — Balance Exhausted</h3>
-                      <span className="px-2 py-0.5 text-[10px] font-mono bg-amber-400 text-neutral-950 font-bold rounded-full uppercase">
-                        Independent Candidate
-                      </span>
-                    </div>
-                    <p className="text-xs text-neutral-300 mt-1 leading-relaxed">
-                      You have exhausted your interview credits. Independent candidates must pay to refill credits to continue taking mock interviews and assessments.
-                    </p>
-                  </div>
+        {/* 0 Credits Alert Banner in Assignments View - Only for Institutional Students */}
+        {!isIndependent && (student.coins ?? 5) === 0 && (
+          <div className="bg-gradient-to-r from-rose-950 via-neutral-900 to-rose-900 border border-rose-600/70 rounded-2xl p-5 shadow-lg text-white space-y-3">
+            <div className="flex items-start space-x-3.5">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/40 flex items-center justify-center shrink-0 mt-0.5">
+                <ShieldAlert className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h3 className="text-sm font-bold text-rose-300">0 Credits Available — Balance Exhausted</h3>
+                  <span className="px-2 py-0.5 text-[10px] font-mono bg-rose-400 text-neutral-950 font-bold rounded-full uppercase">
+                    Institutional Student
+                  </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setPaymentModalOpen(true)}
-                  className="px-4 py-2.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-neutral-950 font-bold rounded-xl text-xs flex items-center space-x-2 shrink-0 shadow-md transition-all cursor-pointer"
-                  title="Independent candidate: Pay to refill 5 credits"
-                >
-                  <CreditCard className="w-4 h-4" />
-                  <span>Pay to Refill 5 Credits ($4.99 / ₹399)</span>
-                </button>
+                <p className="text-xs text-neutral-300 mt-1">
+                  0 credits remaining. Your credits can only be restored by your College's Super Admin. Please contact your college administrator.
+                </p>
               </div>
             </div>
-          ) : (
-            <div className="bg-gradient-to-r from-rose-950 via-neutral-900 to-rose-900 border border-rose-600/70 rounded-2xl p-5 shadow-lg text-white space-y-3">
-              <div className="flex items-start space-x-3.5">
-                <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/40 flex items-center justify-center shrink-0 mt-0.5">
-                  <ShieldAlert className="w-5 h-5 text-rose-400" />
-                </div>
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <h3 className="text-sm font-bold text-rose-300">0 Credits Available — Balance Exhausted</h3>
-                    <span className="px-2 py-0.5 text-[10px] font-mono bg-rose-400 text-neutral-950 font-bold rounded-full uppercase">
-                      Institutional Student
-                    </span>
-                  </div>
-                  <p className="text-xs text-neutral-300 mt-1">
-                    0 credits remaining. Your credits can only be restored by your College's Super Admin. Please contact your college administrator.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )
+          </div>
         )}
 
         {/* Assignments Cards Grid */}
@@ -1086,64 +1054,26 @@ export const StudentDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 0 Credits Alert Banner */}
-      {(student.coins ?? 5) === 0 && (
-        isIndependent ? (
-          <div className="bg-gradient-to-r from-amber-950 via-neutral-900 to-amber-900 border border-amber-600/70 rounded-2xl p-5 shadow-lg text-white space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-start space-x-3.5">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center shrink-0 mt-0.5">
-                  <Clock className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <h3 className="text-sm font-bold text-amber-300">0 Credits Available — 3-Day Waiting Period Active</h3>
-                    <span className="px-2 py-0.5 text-[10px] font-mono bg-amber-400 text-neutral-950 font-bold rounded-full uppercase">
-                      Independent Candidate
-                    </span>
-                  </div>
-                  <p className="text-xs text-neutral-300 mt-1 leading-relaxed">
-                    You have exhausted your credits. Individually registered students must wait a period of <strong>3 days (72 hours)</strong> to automatically regain all 5 credits.
-                  </p>
-                  <div className="flex items-center space-x-2 mt-2 font-mono text-xs">
-                    <span className="text-neutral-400">Regeneration countdown:</span>
-                    <span className="px-2.5 py-1 bg-black/60 rounded-lg text-amber-300 font-bold border border-amber-500/30">
-                      ⏳ {formatCooldown(cooldownRemainingMs)}
-                    </span>
-                  </div>
-                </div>
+      {/* 0 Credits Alert Banner - Only for Institutional Students */}
+      {!isIndependent && (student.coins ?? 5) === 0 && (
+        <div className="bg-gradient-to-r from-rose-950 via-neutral-900 to-rose-900 border border-rose-600/70 rounded-2xl p-5 shadow-lg text-white space-y-3">
+          <div className="flex items-start space-x-3.5">
+            <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/40 flex items-center justify-center shrink-0 mt-0.5">
+              <ShieldAlert className="w-5 h-5 text-rose-400" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h3 className="text-sm font-bold text-rose-300">0 Credits Available — Balance Exhausted</h3>
+                <span className="px-2 py-0.5 text-[10px] font-mono bg-rose-400 text-neutral-950 font-bold rounded-full uppercase">
+                  Institutional Candidate
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={() => simulateElapsedCooldown(student.id || 'stu-candidate')}
-                className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold rounded-xl text-xs flex items-center space-x-2 shrink-0 shadow-md transition-colors cursor-pointer"
-                title="Fast-forward 3 days to test automatic credit replenishment"
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>Fast-Forward 3 Days (Test)</span>
-              </button>
+              <p className="text-xs text-neutral-300 mt-1 leading-relaxed">
+                You have 0 credits remaining. Each interview or communication session requires 1 credit. As an institutional student enrolled under your college department, <strong>only the Super Admin can restore all 5 credits for you</strong>. Please contact your college placement administration or Super Admin to request replenishment.
+              </p>
             </div>
           </div>
-        ) : (
-          <div className="bg-gradient-to-r from-rose-950 via-neutral-900 to-rose-900 border border-rose-600/70 rounded-2xl p-5 shadow-lg text-white space-y-3">
-            <div className="flex items-start space-x-3.5">
-              <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/40 flex items-center justify-center shrink-0 mt-0.5">
-                <ShieldAlert className="w-5 h-5 text-rose-400" />
-              </div>
-              <div>
-                <div className="flex items-center space-x-2">
-                  <h3 className="text-sm font-bold text-rose-300">0 Credits Available — Balance Exhausted</h3>
-                  <span className="px-2 py-0.5 text-[10px] font-mono bg-rose-400 text-neutral-950 font-bold rounded-full uppercase">
-                    Institutional Candidate
-                  </span>
-                </div>
-                <p className="text-xs text-neutral-300 mt-1 leading-relaxed">
-                  You have 0 credits remaining. Each interview or communication session requires 1 credit. As an institutional student enrolled under your college department, <strong>only the Super Admin can restore all 5 credits for you</strong>. Please contact your college placement administration or Super Admin to request replenishment.
-                </p>
-              </div>
-            </div>
-          </div>
-        )
+        </div>
       )}
 
       {/* Dynamic Indication Notification: Results Ready */}
@@ -1500,15 +1430,15 @@ export const StudentDashboard: React.FC = () => {
           <div className="pt-6 mt-6 border-t border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="space-y-0.5">
               <span className="text-[11px] font-mono text-amber-400 flex items-center space-x-1">
-                <span>🪙</span>
-                <span>Cost: 1 Coin (Restored upon legitimate completion)</span>
+                <span>{isIndependent ? '🎯' : '🪙'}</span>
+                <span>{isIndependent ? 'Unlimited Access (Independent Candidate)' : 'Cost: 1 Coin (Restored upon legitimate completion)'}</span>
               </span>
             </div>
             <button
               type="button"
-              disabled={(student.coins ?? 5) < 1}
+              disabled={!isIndependent && (student.coins ?? 5) < 1}
               onClick={() => {
-                if ((student.coins ?? 5) < 1) {
+                if (!isIndependent && (student.coins ?? 5) < 1) {
                   alert("Insufficient Coins: You need at least 1 coin to attend an interview or communication session. Your balance is 0 Coins.");
                   return;
                 }
@@ -1518,13 +1448,13 @@ export const StudentDashboard: React.FC = () => {
                 startInterview('MOCK_INTERVIEW', { isResumeBased: true, assignment: null });
               }}
               className={`inline-flex items-center justify-center space-x-2 font-semibold px-5 py-2.5 rounded-xl text-xs transition-all shadow-sm ${
-                (student.coins ?? 5) < 1
+                !isIndependent && (student.coins ?? 5) < 1
                   ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed border border-neutral-700'
                   : 'bg-white hover:bg-neutral-100 text-neutral-950 cursor-pointer'
               }`}
             >
               <Mic className="w-3.5 h-3.5" />
-              <span>{(student.coins ?? 5) < 1 ? '0 Coins - Balance Required' : 'Launch Resume Mock Interview'}</span>
+              <span>{!isIndependent && (student.coins ?? 5) < 1 ? '0 Coins - Balance Required' : 'Launch Resume Mock Interview'}</span>
               <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
             </button>
           </div>
@@ -1566,28 +1496,28 @@ export const StudentDashboard: React.FC = () => {
           <div className="pt-6 mt-6 border-t border-neutral-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="space-y-0.5">
               <span className="text-[11px] font-mono text-amber-700 flex items-center space-x-1">
-                <span>🪙</span>
-                <span>Cost: 1 Coin (Restored upon legitimate completion)</span>
+                <span>{isIndependent ? '🎯' : '🪙'}</span>
+                <span>{isIndependent ? 'Unlimited Access (Independent Candidate)' : 'Cost: 1 Coin (Restored upon legitimate completion)'}</span>
               </span>
             </div>
             <button
               type="button"
-              disabled={(student.coins ?? 5) < 1}
+              disabled={!isIndependent && (student.coins ?? 5) < 1}
               onClick={() => {
-                if ((student.coins ?? 5) < 1) {
+                if (!isIndependent && (student.coins ?? 5) < 1) {
                   alert("Insufficient Coins: You need at least 1 coin to attend an interview or communication session. Your balance is 0 Coins.");
                   return;
                 }
                 startInterview('LISTENING_COMPREHENSION', { assignment: null });
               }}
               className={`inline-flex items-center justify-center space-x-2 font-semibold px-5 py-2.5 rounded-xl text-xs transition-all shadow-xs ${
-                (student.coins ?? 5) < 1
+                !isIndependent && (student.coins ?? 5) < 1
                   ? 'bg-neutral-200 text-neutral-500 cursor-not-allowed border border-neutral-300'
                   : 'bg-neutral-900 hover:bg-black text-white cursor-pointer'
               }`}
             >
               <Headphones className="w-3.5 h-3.5" />
-              <span>{(student.coins ?? 5) < 1 ? '0 Coins - Balance Required' : 'Start Listening'}</span>
+              <span>{!isIndependent && (student.coins ?? 5) < 1 ? '0 Coins - Balance Required' : 'Start Listening'}</span>
               <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
             </button>
           </div>

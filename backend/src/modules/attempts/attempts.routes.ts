@@ -55,15 +55,31 @@ attemptsRouter.post(
         throw new AppError(409, 'You already have an active attempt for this assessment', 'ATTEMPT_IN_PROGRESS');
       }
 
-      // Consume credits first (idempotent — safe to retry on transient failure)
-      const { rows: policyRows } = await db.query(
-        `SELECT consume_amount FROM credit.credit_policies
-         WHERE scope_type = 'GLOBAL' AND is_active = TRUE ORDER BY created_at ASC LIMIT 1`
+      // Check if candidate is independent
+      const { rows: userRows } = await db.query(
+        `SELECT (ic.id IS NOT NULL OR u.institution_id IS NULL) AS is_indep
+         FROM org.students s
+         JOIN identity.users u ON u.id = s.user_id
+         LEFT JOIN candidate.independent_candidates ic ON ic.user_id = u.id
+         WHERE s.id = $1`,
+        [student_id]
       );
-      const creditCost = policyRows.length > 0 ? Number(policyRows[0].consume_amount) : 10;
-      const { newBalance } = await CreditService.consume(
-        student_id, creditCost, 'ASSESSMENT_START', assessmentId
-      );
+      const isIndep = Boolean(userRows[0]?.is_indep);
+
+      // Consume credits only for institutional students
+      let creditCost = 0;
+      let newBalance = 999;
+      if (!isIndep) {
+        const { rows: policyRows } = await db.query(
+          `SELECT consume_amount FROM credit.credit_policies
+           WHERE scope_type = 'GLOBAL' AND is_active = TRUE ORDER BY created_at ASC LIMIT 1`
+        );
+        creditCost = policyRows.length > 0 ? Number(policyRows[0].consume_amount) : 10;
+        const result = await CreditService.consume(
+          student_id, creditCost, 'ASSESSMENT_START', assessmentId
+        );
+        newBalance = result.newBalance;
+      }
 
       // Create attempt — compensate credits on any failure (partial-unique index guards race)
       const assessment = assessments[0];
@@ -80,11 +96,13 @@ attemptsRouter.post(
         );
         attempt = rows;
       } catch (insertErr: unknown) {
-        // Refund consumed credits before propagating the error
-        await CreditService.earn(student_id, creditCost, 'ASSESSMENT_START_REFUND', assessmentId)
-          .catch(refundErr =>
-            console.error('[attempts] credit refund failed:', (refundErr as Error).message)
-          );
+        if (!isIndep && creditCost > 0) {
+          // Refund consumed credits before propagating the error
+          await CreditService.earn(student_id, creditCost, 'ASSESSMENT_START_REFUND', assessmentId)
+            .catch(refundErr =>
+              console.error('[attempts] credit refund failed:', (refundErr as Error).message)
+            );
+        }
         if ((insertErr as { code?: string }).code === '23505') {
           throw new AppError(409, 'You already have an active attempt for this assessment', 'ATTEMPT_IN_PROGRESS');
         }

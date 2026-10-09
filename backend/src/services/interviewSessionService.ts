@@ -170,11 +170,7 @@ async function createStudentForUser(userId: string): Promise<(StudentContext & {
   );
   if (uRows.length === 0) return null;
   const u = uRows[0];
-  let instId = u.institution_id;
-  if (!instId) {
-    const { rows: insts } = await db.query(`SELECT id FROM org.institutions ORDER BY created_at DESC LIMIT 1`);
-    instId = insts[0]?.id;
-  }
+  const instId = u.institution_id;
   let programId: string | null = null;
   let batchId: string | null = null;
   if (instId) {
@@ -201,10 +197,10 @@ async function createStudentForUser(userId: string): Promise<(StudentContext & {
   }
   const roll = `STU${Date.now().toString(36).toUpperCase().slice(-6)}`;
   const { rows: newStu } = await db.query(
-    `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track)
-     VALUES ($1, $2, $3, $4, 'General Department', 2026, 'General Track')
+    `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track, coins)
+     VALUES ($1, $2, $3, $4, $5, 2026, 'General Track', $6)
      RETURNING id, program_id, batch_id, subdivision_id`,
-    [u.id, programId, batchId, roll]
+    [u.id, programId, batchId, roll, instId ? 'General Department' : 'Self-Paced Learning', instId ? 5 : 999]
   );
   return newStu.length > 0 ? { ...newStu[0], name: u.name } : null;
 }

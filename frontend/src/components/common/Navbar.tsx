@@ -298,11 +298,24 @@ export const Navbar: React.FC = () => {
             {activeRole === 'STUDENT' && (
               <div 
                 onClick={() => setActiveView('DASHBOARD')}
-                className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200/90 rounded-xl text-amber-900 shadow-2xs cursor-pointer transition-colors"
-                title="Available Session Coins"
+                className={`flex items-center space-x-1.5 px-2.5 py-1.5 border rounded-xl shadow-2xs cursor-pointer transition-colors ${
+                  student?.isIndependent || currentUser?.isIndependent
+                    ? 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200/90 text-emerald-900 dark:bg-emerald-950/40 dark:border-emerald-800/80 dark:text-emerald-300'
+                    : 'bg-amber-50 hover:bg-amber-100 border-amber-200/90 text-amber-900 dark:bg-amber-950/40 dark:border-amber-800/80 dark:text-amber-300'
+                }`}
+                title={student?.isIndependent || currentUser?.isIndependent ? "Independent Candidate - Unlimited Access" : "Available Session Coins"}
               >
-                <span className="text-sm">🪙</span>
-                <span className="text-xs font-bold font-mono">{student?.coins ?? 5} Coins</span>
+                {student?.isIndependent || currentUser?.isIndependent ? (
+                  <>
+                    <span className="text-sm">🎯</span>
+                    <span className="text-xs font-bold font-mono">Unlimited</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm">🪙</span>
+                    <span className="text-xs font-bold font-mono">{student?.coins ?? 5} Coins</span>
+                  </>
+                )}
               </div>
             )}
 

@@ -128,63 +128,46 @@ authRouter.post('/register-candidate', async (req: Request, res: Response): Prom
   try {
     await client.query('BEGIN');
 
-    // 1. Resolve institution
-    let instId: string;
-    let instName = 'Main Institution';
+    // 1. Resolve institution (only if explicitly provided)
+    let instId: string | null = null;
+    let progId: string | null = null;
+    let batchId: string | null = null;
+
     if (collegeId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(collegeId)) {
       const { rows } = await client.query(`SELECT id, name FROM org.institutions WHERE id = $1`, [collegeId]);
       if (rows.length > 0) {
         instId = rows[0].id;
-        instName = rows[0].name;
-      } else {
-        const { rows: latest } = await client.query(`SELECT id, name FROM org.institutions ORDER BY created_at DESC LIMIT 1`);
-        instId = latest[0]?.id;
-        instName = latest[0]?.name || instName;
-      }
-    } else {
-      const { rows: latest } = await client.query(`SELECT id, name FROM org.institutions ORDER BY created_at DESC LIMIT 1`);
-      if (latest.length > 0) {
-        instId = latest[0].id;
-        instName = latest[0].name;
-      } else {
-        const { rows: created } = await client.query(
-          `INSERT INTO org.institutions (name, code, type, is_active) VALUES ('Main Institution', 'INST01', 'COLLEGE', true) RETURNING id, name`
+
+        // Resolve or create program under this institution
+        const { rows: progs } = await client.query(
+          `SELECT id, name FROM org.programs WHERE institution_id = $1 LIMIT 1`,
+          [instId]
         );
-        instId = created[0].id;
-        instName = created[0].name;
+        if (progs.length > 0) {
+          progId = progs[0].id;
+        } else {
+          const { rows: newProg } = await client.query(
+            `INSERT INTO org.programs (institution_id, name, code) VALUES ($1, $2, 'GEN') RETURNING id`,
+            [instId, programName || 'General Engineering']
+          );
+          progId = newProg[0].id;
+        }
+
+        // Resolve or create batch under this program
+        const { rows: batches } = await client.query(
+          `SELECT id FROM org.batches WHERE program_id = $1 AND year = $2 LIMIT 1`,
+          [progId, batchYear]
+        );
+        if (batches.length > 0) {
+          batchId = batches[0].id;
+        } else {
+          const { rows: newBatch } = await client.query(
+            `INSERT INTO org.batches (program_id, name, year, track) VALUES ($1, $2, $3, $4) RETURNING id`,
+            [progId, `Batch ${batchYear}`, batchYear, track || 'General Track']
+          );
+          batchId = newBatch[0].id;
+        }
       }
-    }
-
-    // 2. Resolve or create program
-    let progId: string;
-    const { rows: progs } = await client.query(
-      `SELECT id, name FROM org.programs WHERE institution_id = $1 LIMIT 1`,
-      [instId]
-    );
-    if (progs.length > 0) {
-      progId = progs[0].id;
-    } else {
-      const { rows: newProg } = await client.query(
-        `INSERT INTO org.programs (institution_id, name, code) VALUES ($1, $2, 'GEN') RETURNING id`,
-        [instId, programName || 'General Engineering']
-      );
-      progId = newProg[0].id;
-    }
-
-    // 3. Resolve or create batch
-    let batchId: string;
-    const { rows: batches } = await client.query(
-      `SELECT id FROM org.batches WHERE program_id = $1 AND year = $2 LIMIT 1`,
-      [progId, batchYear]
-    );
-    if (batches.length > 0) {
-      batchId = batches[0].id;
-    } else {
-      const { rows: newBatch } = await client.query(
-        `INSERT INTO org.batches (program_id, name, year, track) VALUES ($1, $2, $3, $4) RETURNING id`,
-        [progId, `Batch ${batchYear}`, batchYear, track || 'General Track']
-      );
-      batchId = newBatch[0].id;
     }
 
     // Check if email is already in use
@@ -209,25 +192,28 @@ authRouter.post('/register-candidate', async (req: Request, res: Response): Prom
     const user = userRows[0];
 
     // 6. Ensure independent candidate record is persisted in candidate.independent_candidates
-    await client.query(
-      `INSERT INTO candidate.independent_candidates (user_id, name, email, credits, status)
-       VALUES ($1, $2, $3, 5, 'ACTIVE')
-       ON CONFLICT (user_id) DO UPDATE SET
-         name = EXCLUDED.name,
-         email = EXCLUDED.email,
-         credits = COALESCE(candidate.independent_candidates.credits, 5)`,
-      [user.id, name, email.toLowerCase()]
-    ).catch(() => {});
+    if (!instId) {
+      await client.query(
+        `INSERT INTO candidate.independent_candidates (user_id, name, email, credits, status)
+         VALUES ($1, $2, $3, 999, 'ACTIVE')
+         ON CONFLICT (user_id) DO UPDATE SET
+           name = EXCLUDED.name,
+           email = EXCLUDED.email,
+           credits = 999`,
+        [user.id, name, email.toLowerCase()]
+      ).catch(() => {});
+    }
 
-    // 7. Ensure student record exists in org.students with 5 coins/credits
-    const actualRoll = rollNumber || `22CS${Math.floor(1000 + Math.random() * 9000)}`;
+    // 7. Ensure student record exists in org.students (5 coins for institutional, 999 for independent)
+    const initialCoins = instId ? 5 : 999;
+    const actualRoll = rollNumber || (instId ? `22CS${Math.floor(1000 + Math.random() * 9000)}` : `IND${Math.floor(10000 + Math.random() * 90000)}`);
     const { rows: studentRows } = await client.query<{ id: string }>(
       `INSERT INTO org.students (user_id, program_id, batch_id, roll_number, department, batch_year, track, coins, overall_readiness)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 5, 75)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 75)
        ON CONFLICT (user_id) DO UPDATE SET
-         coins = COALESCE(org.students.coins, 5)
+         coins = COALESCE(org.students.coins, $8)
        RETURNING id`,
-      [user.id, progId, batchId, actualRoll, department, batchYear, track]
+      [user.id, progId, batchId, actualRoll, department, batchYear, track, initialCoins]
     );
     const studentId = studentRows[0].id;
 
@@ -412,6 +398,7 @@ authRouter.post('/login', async (req: Request, res: Response): Promise<void> => 
       institution_id: string | null; institution_name: string | null;
       // faculty / staff fields
       department: string | null;
+      is_independent: boolean;
     }>(
       `SELECT
          u.id, u.name, u.email, u.role, u.password_hash, u.token_version, u.status,
@@ -421,10 +408,12 @@ authRouter.post('/login', async (req: Request, res: Response): Promise<void> => 
          b.track        AS student_track,
          p.id           AS program_id,
          p.name         AS program_name,
-         COALESCE(u.institution_id, inst.id, ra_inst.id, inv_inst.id, ds_inst.id, u_inst.id) AS institution_id,
-         COALESCE(u_inst.name, inst.name, ra_inst.name, inv_inst.name, ds_inst.name) AS institution_name,
+         (ic.id IS NOT NULL OR u.institution_id IS NULL) AS is_independent,
+         CASE WHEN (ic.id IS NOT NULL OR u.institution_id IS NULL) THEN NULL ELSE COALESCE(u.institution_id, inst.id, ra_inst.id, inv_inst.id, ds_inst.id, u_inst.id) END AS institution_id,
+         CASE WHEN (ic.id IS NOT NULL OR u.institution_id IS NULL) THEN NULL ELSE COALESCE(u_inst.name, inst.name, ra_inst.name, inv_inst.name, ds_inst.name) END AS institution_name,
          COALESCE(ds.department, fp.department, d.department) AS department
        FROM identity.users u
+       LEFT JOIN candidate.independent_candidates ic ON ic.user_id = u.id
        LEFT JOIN org.institutions       u_inst ON u_inst.id    = u.institution_id
        LEFT JOIN org.students           s    ON s.user_id     = u.id
        LEFT JOIN org.batches            b    ON b.id          = s.batch_id
@@ -496,6 +485,7 @@ authRouter.post('/login', async (req: Request, res: Response): Promise<void> => 
         collegeId:      row.institution_id   ?? undefined,
         collegeName:    row.institution_name ?? undefined,
         department:     row.department   ?? undefined,
+        isIndependent:  Boolean(row.is_independent),
       },
       studentId: row.student_id,
     });

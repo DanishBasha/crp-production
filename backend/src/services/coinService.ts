@@ -40,32 +40,52 @@ async function balanceOf(studentId: string): Promise<number> {
   return Number(rows[0]?.balance ?? 0);
 }
 
-export async function getCoins(studentId: string): Promise<{ coins: number; maxCoins: number }> {
+export async function getCoins(studentId: string): Promise<{ coins: number; maxCoins: number; isIndependent: boolean }> {
+  const { rows: info } = await db.query<{ is_indep: boolean }>(
+    `SELECT (ic.id IS NOT NULL OR u.institution_id IS NULL) AS is_indep
+     FROM org.students s
+     JOIN identity.users u ON u.id = s.user_id
+     LEFT JOIN candidate.independent_candidates ic ON ic.user_id = u.id
+     WHERE s.id = $1`,
+    [studentId]
+  );
+  const isIndependent = Boolean(info[0]?.is_indep);
+  if (isIndependent) {
+    return { coins: 999, maxCoins: 999, isIndependent: true };
+  }
+
   const [balance, price] = await Promise.all([balanceOf(studentId), coinPrice()]);
-  return { coins: Math.min(MAX_COINS, toCoins(balance, price)), maxCoins: MAX_COINS };
+  return { coins: Math.min(MAX_COINS, toCoins(balance, price)), maxCoins: MAX_COINS, isIndependent: false };
 }
 
-/** Charges one coin for a session; `reference` (attempt id / session id) makes it idempotent. */
+/** Charges one coin for a session; independent candidates have unlimited access and are never charged. */
 export async function spendCoin(studentId: string, reference: string): Promise<number> {
+  const { rows: info } = await db.query<{ is_indep: boolean; institution_id: string | null }>(
+    `SELECT (ic.id IS NOT NULL OR u.institution_id IS NULL) AS is_indep, u.institution_id
+     FROM org.students s
+     JOIN identity.users u ON u.id = s.user_id
+     LEFT JOIN candidate.independent_candidates ic ON ic.user_id = u.id
+     WHERE s.id = $1`,
+    [studentId]
+  );
+  const isIndependent = Boolean(info[0]?.is_indep);
+  if (isIndependent) {
+    // Independent candidates have unlimited access; no credits needed or consumed
+    return 999;
+  }
+
+  // Institutional student: check ledger and deduct strictly
   const [balance, price] = await Promise.all([balanceOf(studentId), coinPrice()]);
   if (balance < price) {
-    const { rows } = await db.query<{ institution_id: string | null }>(
-      `SELECT u.institution_id FROM org.students s JOIN identity.users u ON u.id = s.user_id WHERE s.id = $1`,
-      [studentId]
+    throw new AppError(
+      402,
+      "You have run out of interview credits. Please contact your College's Super Admin to restore your credits.",
+      'INSUFFICIENT_COINS'
     );
-    const isInstitutional = Boolean(rows[0]?.institution_id);
-    const message = isInstitutional
-      ? "You have run out of interview credits. Please contact your College's Super Admin to restore your credits."
-      : "You have run out of interview credits. Please pay to refill your credits to continue.";
-    throw new AppError(402, message, 'INSUFFICIENT_COINS');
   }
   const { newBalance } = await CreditService.consume(studentId, price, SPEND_REASON, reference);
   const remaining = toCoins(newBalance, price);
   await db.query('UPDATE org.students SET coins = $1, updated_at = now() WHERE id = $2', [remaining, studentId]).catch(() => {});
-  await db.query(
-    'UPDATE candidate.independent_candidates SET credits = $1, zero_credits_at = (CASE WHEN $1 = 0 THEN now() ELSE NULL END), updated_at = now() WHERE user_id = (SELECT user_id FROM org.students WHERE id = $2)',
-    [remaining, studentId]
-  ).catch(() => {});
   return remaining;
 }
 
@@ -74,6 +94,15 @@ export async function spendCoin(studentId: string, reference: string): Promise<n
  * Completing a session does not award bonus coins (strict coin policy).
  */
 export async function rewardCompletion(studentId: string, _reference: string): Promise<number> {
+  const { rows: info } = await db.query<{ is_indep: boolean }>(
+    `SELECT (ic.id IS NOT NULL OR u.institution_id IS NULL) AS is_indep
+     FROM org.students s
+     JOIN identity.users u ON u.id = s.user_id
+     LEFT JOIN candidate.independent_candidates ic ON ic.user_id = u.id
+     WHERE s.id = $1`,
+    [studentId]
+  );
+  if (info[0]?.is_indep) return 999;
   const price = await coinPrice();
   return toCoins(await balanceOf(studentId), price);
 }

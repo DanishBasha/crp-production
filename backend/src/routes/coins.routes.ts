@@ -30,10 +30,11 @@ coinsRouter.get('/me', async (req: AuthRequest, res: Response): Promise<void> =>
       [req.user!.id]
     );
     const institutionId = rows[0]?.institution_id ?? null;
+    const isIndependent = Boolean(wallet.isIndependent || !institutionId);
     sendSuccess(res, {
       ...wallet,
-      institutionId,
-      isIndependent: !institutionId,
+      institutionId: isIndependent ? null : institutionId,
+      isIndependent,
     });
   } catch (err) {
     sendError(res, err);
